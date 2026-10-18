@@ -1,54 +1,54 @@
 /**
- * Superficies del dashboard — alineadas a `ArenaCard` en Explorer: panel gris `pv-surface`
- * frente al fondo `pv-bg`, borde `white/[0.12]`, hover como en Arena (`#242323` + borde emerald).
+ * Dashboard surfaces — aligned with `ArenaCard` in Explorer: gray panel `pv-surface`
+ * against the `pv-bg` background, `white/[0.12]` border, hover behavior as in Arena (`#242323` + emerald border).
  *
- * Evitar fondos muy transparentes que se confundan con el fondo de página.
+ * Avoid overly transparent backgrounds that blend into the page background.
  */
 
-/** Tarjeta estándar: filas de lista, contenedor de VS, KPI (paridad `ArenaCard`). */
+/** Standard card: list rows, VS container, KPI (`ArenaCard` parity). */
 export const DASHBOARD_CARD_SURFACE =
   "rounded-xl border border-pv-ink/[0.12] bg-pv-surface";
 
-/** Hover para KPI y bloques planos interactivos (paridad `ArenaCard`). */
+/** Hover for KPI and interactive flat blocks (`ArenaCard` parity). */
 export const DASHBOARD_CARD_HOVER =
   "transition-[border-color,background-color] duration-200 hover:border-pv-emerald/40 hover:bg-pv-surface2";
 
-/** Panel con padding (filtros, perfil de riesgo, quick actions). */
+/** Panel with padding (filters, risk profile, quick actions). */
 export const DASHBOARD_PANEL_SURFACE = `${DASHBOARD_CARD_SURFACE} p-4 sm:p-5`;
 
-/** Estados vacíos / sin coincidencias (mismo relleno gris, borde discontinuo). */
+/** Empty states / no matches (same gray fill, dashed border). */
 export const DASHBOARD_SURFACE_DASHED =
   "rounded-xl border border-dashed border-pv-ink/[0.12] bg-pv-surface";
 
-/** Barra de resumen, "load more" (tono gris intermedio, misma familia cromática). */
+/** Summary bar, "load more" (intermediate gray tone, same chromatic family). */
 export const DASHBOARD_SURFACE_MUTED =
   "rounded-xl border border-pv-ink/[0.1] bg-pv-surface2/35";
 
-/** Placeholder de carga de filas. */
+/** Loading placeholder for rows. */
 export const DASHBOARD_SKELETON_ROW =
   "rounded-xl border border-pv-ink/[0.12] bg-pv-surface2/50";
 
-/** Celdas de stats dentro de filas (mismo patrón que `ArenaCard`). */
+/** Stat cells inside rows (same pattern as `ArenaCard`). */
 export const DASHBOARD_STAT_CELL_SURFACE =
   "rounded border border-pv-ink/[0.1] bg-pv-ink/[0.03] px-3 py-2.5 sm:px-3.5 sm:py-3";
 
 /**
- * Paginación del dashboard — contrato de UI para cargar posiciones por lotes.
+ * Dashboard pagination — UI contract for batch loading positions.
  *
- * El dashboard carga posiciones desde la cadena (chain-as-source-of-truth); el
- * cliente solo pagina lo ya cargado y nunca invalida el estado de la cadena.
+ * The dashboard loads positions from the chain (chain-as-source-of-truth); the
+ * client only paginates what is already loaded and never invalidates chain state.
  */
 
-/** Tamaño de página predeterminado para las posiciones del dashboard. */
+/** Default page size for dashboard positions. */
 export const DASHBOARD_PAGE_SIZE = 10 as const;
 
-/** Tamaño máximo de página permitido (límite de entrada de contrato). */
+/** Maximum allowed page size (contract input boundary). */
 export const DASHBOARD_MAX_PAGE_SIZE = 100 as const;
 
-/** Tamaño mínimo de página permitido. */
+/** Minimum allowed page size. */
 export const DASHBOARD_MIN_PAGE_SIZE = 1 as const;
 
-/** Estado de carga de la fábrica de paginación. */
+/** Loading status for the pagination factory. */
 export type DashboardPaginationStatus =
   | "idle"
   | "loading"
@@ -58,7 +58,7 @@ export type DashboardPaginationStatus =
   | "disconnected"
   | "dependency-failure";
 
-/** Razón de la falla de paginación para reportar a la UI. */
+/** Reason for pagination failure to report to the UI. */
 export type DashboardPaginationFailure =
   | "none"
   | "invalid-page"
@@ -68,13 +68,13 @@ export type DashboardPaginationFailure =
   | "wallet-disconnected"
   | "data-source-unavailable";
 
-/** Entrada de paginación normalizada y segura. */
+/** Normalized and safe pagination input. */
 export interface DashboardPaginationInput {
   page: number;
   pageSize: number;
 }
 
-/** Resultado de normalizar una entrada de paginación. */
+/** Result of normalizing a pagination input. */
 export interface DashboardPaginationResolved {
   page: number;
   pageSize: number;
@@ -82,7 +82,7 @@ export interface DashboardPaginationResolved {
   failure: DashboardPaginationFailure;
 }
 
-/** Metadatos de paginación para la barra de resumen y el control de página. */
+/** Pagination metadata for summary bar and page control. */
 export interface DashboardPaginationMeta {
   totalItems: number;
   totalPages: number;
@@ -92,7 +92,7 @@ export interface DashboardPaginationMeta {
   hasNext: boolean;
 }
 
-/** Estado de paginación expuesto a la UI del dashboard. */
+/** Pagination state exposed to the dashboard UI. */
 export interface DashboardPaginationState {
   status: DashboardPaginationStatus;
   failure: DashboardPaginationFailure;
@@ -101,7 +101,7 @@ export interface DashboardPaginationState {
   meta: DashboardPaginationMeta;
 }
 
-/** Estado inicial de la fábrica de paginación. */
+/** Initial state for the pagination factory. */
 export const DASHBOARD_PAGINATION_INITIAL: DashboardPaginationState = {
   status: "idle",
   failure: "none",
@@ -117,7 +117,7 @@ export const DASHBOARD_PAGINATION_INITIAL: DashboardPaginationState = {
   },
 };
 
-/** Mensajes de estado para la UI de paginación. */
+/** Status messages for the pagination UI. */
 export const DASHBOARD_PAGINATION_MESSAGES: Record<DashboardPaginationStatus, string> = {
   idle: "",
   loading: "Cargando posiciones…",
@@ -128,7 +128,7 @@ export const DASHBOARD_PAGINATION_MESSAGES: Record<DashboardPaginationStatus, st
   "dependency-failure": "No pudimos cargar las posiciones. Intentá de nuevo.",
 };
 
-/** Mensajes de falla específicas de paginación. */
+/** Specific pagination failure messages. */
 export const DASHBOARD_PAGINATION_FAILURE_MESSAGES: Record<
   DashboardPaginationFailure,
   string
@@ -142,26 +142,26 @@ export const DASHBOARD_PAGINATION_FAILURE_MESSAGES: Record<
   "data-source-unavailable": "El origen de datos de la cadena no está disponible.",
 };
 
-/** Contrato de entrada de la fábrica de paginación. */
+/** Input contract for the pagination factory. */
 export interface DashboardPaginationContract {
   pageSize: number;
   maxPageSize: number;
   minPageSize: number;
 }
 
-/** Contrato de paginación expuesto a los loaders del dashboard. */
+/** Pagination contract exposed to dashboard loaders. */
 export const DASHBOARD_PAGINATION_CONTRACT: DashboardPaginationContract = {
   pageSize: DASHBOARD_PAGE_SIZE,
   maxPageSize: DASHBOARD_MAX_PAGE_SIZE,
   minPageSize: DASHBOARD_MIN_PAGE_SIZE,
 };
 
-/** Verifica si un valor es un entero finito. */
+/** Checks if a value is a finite integer. */
 function isFiniteInteger(value: number): boolean {
   return Number.isInteger(value) && Number.isFinite(value);
 }
 
-/** Normaliza el tamaño de página dentro del contrato. */
+/** Normalizes the page size within the contract bounds. */
 function normalizePageSize(pageSize: number): number {
   if (!isFiniteInteger(pageSize)) {
     return DASHBOARD_PAGINATION_CONTRACT.pageSize;
@@ -175,7 +175,7 @@ function normalizePageSize(pageSize: number): number {
   return pageSize;
 }
 
-/** Normaliza el número de página a un entero positivo. */
+/** Normalizes the page number to a positive integer. */
 function normalizePage(page: number): number {
   if (!isFiniteInteger(page) || page < 1) {
     return 1;
@@ -184,10 +184,10 @@ function normalizePage(page: number): number {
 }
 
 /**
- * Resuelve una entrada de paginación a un resultado normalizado y determinista.
+ * Resolves a pagination input into a normalized and deterministic result.
  *
- * La falla reportada es el motivo más relevante para la UI: un valor inválido
- * se considera inválido a pesar de normalizarse a un valor seguro.
+ * The reported failure is the most relevant reason for the UI: an invalid
+ * value is considered invalid even though it normalizes to a safe value.
  */
 export function resolveDashboardPaginationInput(
   input: DashboardPaginationInput,
@@ -215,7 +215,7 @@ export function resolveDashboardPaginationInput(
   };
 }
 
-/** Construye los metadatos de paginación a partir del total de elementos. */
+/** Builds pagination metadata from total items. */
 export function buildDashboardPaginationMeta(
   totalItems: number,
   page: number,
@@ -236,7 +236,7 @@ export function buildDashboardPaginationMeta(
   };
 }
 
-/** Construye el estado de paginación para la UI del dashboard. */
+/** Builds pagination state for the dashboard UI. */
 export function buildDashboardPaginationState(params: {
   totalItems: number;
   page: number;
@@ -296,7 +296,7 @@ export function buildDashboardPaginationState(params: {
   };
 }
 
-/** Coge una página de posiciones de forma segura, sin mutar la fuente. */
+/** Safely slices a page of positions without mutating the source. */
 export function paginateDashboardPositions<T>(
   items: readonly T[],
   page: number,
@@ -317,9 +317,9 @@ export function paginateDashboardPositions<T>(
   };
 }
 
-/** Clases de la barra de paginación (consistente con las superficies). */
+/** Pagination bar classes (consistent with surfaces). */
 export const DASHBOARD_PAGINATION_BAR = `${DASHBOARD_SURFACE_MUTED} flex flex-wrap items-center justify-between gap-3 px-3 sm:px-4`;
 
-/** Clases del botón de paginación. */
+/** Pagination button classes. */
 export const DASHBOARD_PAGINATION_BUTTON =
   "rounded-lg border border-pv-ink/[0.12] bg-pv-surface px-3 py-1.5 text-sm font-medium transition-[border-color,background-color] duration-200 hover:border-pv-emerald/40 hover:bg-pv-surface2 disabled:cursor-not-allowed disabled:opacity-50";

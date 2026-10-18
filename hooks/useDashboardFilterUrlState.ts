@@ -12,11 +12,11 @@ import {
 import { clampDashboardPage } from "@/lib/dashboardUiPolicy";
 
 /**
- * Filtros del dashboard en cliente + URL vía `history.replaceState` (mismo criterio que Explore:
- * sin `router.replace` para evitar re-fetch de RSC).
+ * Dashboard filters in client + URL via `history.replaceState` (same approach as Explore:
+ * without `router.replace` to avoid RSC re-fetch).
  *
- * - Navegación con URL completa / atrás-adelante: `useSearchParams` o `popstate` alinean estado.
- * - La página (`page`) es base 1 y se clampea al rango válido al escribir la URL.
+ * - Full URL navigation / back-forward: `useSearchParams` or `popstate` align state.
+ * - Page (`page`) is 1-based and clamped to the valid range when writing the URL.
  */
 export function useDashboardFilterUrlState() {
   const searchParams = useSearchParams();
@@ -41,7 +41,7 @@ export function useDashboardFilterUrlState() {
   const setTab = useCallback(
     (tab: DashboardUrlTab) => {
       setState((prev) => {
-        // Cambio de pestaña reseta la página para no perder filas en el nuevo conjunto.
+        // Tab switch resets the page to avoid losing rows in the new set.
         const next = { ...prev, tab, page: 1 };
         commitUrl(next);
         return next;
@@ -84,8 +84,8 @@ export function useDashboardFilterUrlState() {
   );
 
   /**
-   * Actualiza la página de la lista. Acepta número o una función reducer para
-   * permitir prev/next sin conocer el estado actual en el llamador.
+   * Updates list page. Accepts number or reducer function so callers
+   * can step prev/next without knowing current state.
    */
   const setPage = useCallback(
     (next: number | ((prev: number) => number)) => {
