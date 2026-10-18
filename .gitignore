@@ -17,8 +17,6 @@ dist/
 # ========================
 # Environment variables
 # ========================
-.env
-.env.local
 .env.development.local
 .env.test.local
 .env.production.local
@@ -69,7 +67,6 @@ Thumbs.db
 *.swo
 *~
 .idea/
-.vscode/
 *.suo
 *.ntvs*
 *.njsproj
@@ -114,3 +111,7 @@ sbom/
 # Local npm audit evidence (uploaded by Actions, not committed)
 npm-audit.json
 npm-audit-report.md
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+config.bat
