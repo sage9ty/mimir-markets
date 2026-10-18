@@ -16,7 +16,7 @@ export type DashboardHoldingStatus = "open" | "accepted" | "resolved";
 
 export type DashboardHoldingVisibility = "public" | "private";
 
-/** Tipos alineados con `vsDetail.marketTypes` (i18n). */
+/** Types aligned with `vsDetail.marketTypes` (i18n). */
 export type DashboardHoldingMarketType =
   | "binary"
   | "moneyline"
@@ -25,22 +25,22 @@ export type DashboardHoldingMarketType =
   | "prop"
   | "custom";
 
-/** Metadatos de mercado por fila (mock; con datos reales vendrán del VS). */
+/** Market metadata per row (mock; with real data will come from VS). */
 export const DASHBOARD_STAKE_HOLDING_META: Record<
   DashboardStakeHoldingId,
   {
     categoryId: CategoryId;
     status: DashboardHoldingStatus;
-    /** Código visible tipo arena (`#xxxx-X`). */
+    /** Visible arena-style code (`#xxxx-X`). */
     idCode: string;
     marketType: DashboardHoldingMarketType;
     oddsMode: "pool" | "fixed";
-    /** Público o privado (duelo acotado). */
+    /** Public or private (bounded match/duel). */
     visibility: DashboardHoldingVisibility;
-    /** Participantes actuales en el pool / mercado. */
+    /** Current participants in the pool / market. */
     participantCount: number;
     /**
-     * Tope de plazas (p. ej. duelo 1v1 = 2). `null` = pool abierto sin tope en UI.
+     * Slot cap (e.g. 1v1 duel = 2). `null` = open pool with no cap in UI.
      */
     maxParticipants: number | null;
   }
@@ -77,7 +77,7 @@ export const DASHBOARD_STAKE_HOLDING_META: Record<
   },
 };
 
-/** Destino del CTA «ver detalles» por fila (sustituir por `/vs/:id` cuando haya datos reales). */
+/** Destination for the "view details" CTA per row (replace with `/vs/:id` when real data exists). */
 export const dashboardStakeHoldingDetailHref: Record<
   DashboardStakeHoldingId,
   string
@@ -87,7 +87,7 @@ export const dashboardStakeHoldingDetailHref: Record<
   alvarez: "/explorer",
 };
 
-/** Píldora del pie (LIVE / OPEN / CLOSED / Settled): coherente con visibilidad y cupo. */
+/** Footer pill (LIVE / OPEN / CLOSED / Settled): consistent with visibility and quota. */
 export type DashboardFooterPoolPill = "live" | "open" | "closed" | "settled";
 
 export function getDashboardHoldingFooterPoolPill(
@@ -106,7 +106,7 @@ export function getDashboardHoldingFooterPoolPill(
   return "open";
 }
 
-/** Perfil de riesgo mock (suma ≈ 100 para UI). */
+/** Mock risk profile (sum ≈ 100 for UI). */
 export const DASHBOARD_RISK_PROFILE_MOCK = [
   { key: "conservative", pct: 45 },
   { key: "moderate", pct: 34 },
