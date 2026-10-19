@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-366-docs-devx-move-root-pr-notes-into-docs-and",
+    "fix/issue-384-fix-ui-use-the-locale-aware-link-in-the-agent",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-366-docs-devx-move-root-pr-notes-into-docs-and": "main",
+    "fix/issue-384-fix-ui-use-the-locale-aware-link-in-the-agent": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-366-docs-devx-move-root-pr-notes-into-docs-and",
+    "fix/issue-384-fix-ui-use-the-locale-aware-link-in-the-agent",
+    "origin"
+  ]
+}
