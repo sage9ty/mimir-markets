@@ -7,10 +7,10 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "rm -rf .next && next dev",
+    "dev": "node init && next dev",
+    "dev:clean": "node init && rm -rf .next && next dev",
     "clean": "rm -rf .next",
-    "build": "next build",
+    "build": "node init && next build",
     "typecheck": "tsc --noEmit",
     "check:terms": "node scripts/check-forbidden-terms.mjs",
     "lint": "npm run check:terms",
@@ -23,7 +23,7 @@
     "check:toolchains": "tsx scripts/check-contract-toolchains.ts",
     "rollback:rehearsal": "tsx scripts/rollback-rehearsal.ts",
     "check:schema-snapshot": "tsx scripts/check-schema-snapshot.ts",
-    "start": "next start",
+    "start": "node init && next start",
     "oracle": "tsx --env-file-if-exists=.env.local agents/oracle/index.ts",
     "oracle:challenge": "AUTO_CHALLENGE=1 tsx --env-file-if-exists=.env.local agents/oracle/index.ts",
     "market-creator": "tsx --env-file-if-exists=.env.local agents/market-creator/index.ts",
