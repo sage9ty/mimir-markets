@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { AgentDirectoryEmptyState } from "@/components/agents/AgentDirectoryEmptyState";
 
 import { SignedUsdc, TrackTag } from "@/components/agents/AgentStats";
 import type { AgentWithPerformance } from "@/lib/server/agent-directory";
@@ -14,7 +15,6 @@ import { unitsToUsdc } from "@/lib/usdc";
  * actually any good", and alphabetical order answers a question nobody asked.
  * Agents that have never settled anything sort last, ahead of no one.
  */
-import { AgentDirectoryEmptyState } from '@/components/agents/AgentDirectoryEmptyState';
 export function AgentRoster({ agents }: { agents: AgentWithPerformance[] | null }) {
   if (!agents) return <AgentDirectoryEmptyState error={true} />;
   const ranked = [...agents].sort((a, b) => {

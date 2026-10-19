@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 
 import { TIME_WINDOWS, type TimeWindow } from "@/lib/agents/performance";
 import { unitsToUsdc } from "@/lib/usdc";
@@ -53,8 +53,7 @@ export function TimeWindowTabs({
           key={window}
           href={window === "all" ? basePath : `${basePath}?window=${window}`}
           aria-current={window === active ? "page" : undefined}
-          className={`border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors ${
-            window === active
+          className={`border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors ${window === active
               ? "border-pv-emerald/45 bg-pv-emerald/[0.1] text-pv-text"
               : "border-pv-ink/[0.12] text-pv-muted hover:border-pv-ink/[0.25] hover:text-pv-text"
           }`}
