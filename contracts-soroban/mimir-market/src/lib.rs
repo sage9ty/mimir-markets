@@ -34,6 +34,8 @@ mod test_dust_isolation;
 mod test_fee_rounding;
 #[config(test)]
 mod test_fees;
+#[cfg(test)]
+mod test_fee_recipient_transition;
 #[config(test)]
 mod test_lifecycle;
 #[config(test)]

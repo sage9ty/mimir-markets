@@ -190,6 +190,10 @@ pub struct FeePolicy {
     pub platform_fee_bps: u32,
     pub agent_owner_fee_bps: u32,
     pub platform_recipient: Option<Address>,
+    /// Monotonic revision of the effective fee policy. Bumped on every
+    /// successful `execute_fee_policy`, so a recipient rotation leaves an
+    /// auditable trail of which policy (and which recipient) was in force.
+    pub revision: u64,
 }
 
 #[contracttype]
@@ -199,6 +203,10 @@ pub struct PendingFeePolicy {
     pub agent_owner_fee_bps: u32,
     pub platform_recipient: Option<Address>,
     pub executable_at: u64,
+    /// Revision the queued policy will take effect as. Fixed at queue time so
+    /// a later queue cannot silently overwrite an in-flight transition's
+    /// identity.
+    pub revision: u64,
 }
 
 #[contracttype]

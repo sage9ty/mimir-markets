@@ -159,6 +159,24 @@ pub struct FeePolicyUpdated {
     pub platform_recipient: Option<Address>,
 }
 
+/// Transition receipt emitted when a queued fee policy (and possibly its
+/// recipient) takes effect.
+///
+/// `previous_platform_recipient` is the identity that accrued liabilities
+/// under the prior policy still belong to; `platform_recipient` is the new
+/// effective recipient. Together with `effective_revision` this lets an
+/// indexer attribute every accrued fee to the policy revision that was in
+/// force when it was minted, so a recipient rotation can never obscure
+/// existing liabilities.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeRecipientTransitioned {
+    pub effective_revision: u64,
+    pub previous_platform_recipient: Option<Address>,
+    pub platform_recipient: Option<Address>,
+    pub effective_at: u64,
+}
+
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeePolicyCancelled {
