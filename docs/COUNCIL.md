@@ -202,6 +202,16 @@ Keep the `council_bonus_payouts` table for audit and manual reconciliation.
 No schema migration or contract redeploy is needed for the funded market
 state; the new table is created by the existing database bootstrap.
 
+### Quorum policy revision
+
+Every aggregate council decision records the quorum policy revision under
+which it was computed. The revision is a stable reference to the quorum
+policy (its threshold and normalization rules) and does not change when
+policy defaults are edited, so historical decisions remain interpretable.
+Replaying captured ballots against the recorded revision reproduces the
+original result deterministically; ballots are never re-scored under a
+newer policy default.
+
 ---
 
 ## Rate-limit strategy

@@ -20,7 +20,21 @@ export interface PeerReasoningRead {
   sellerName: string;
   reasoning: string;
   pricePaidUnits: string | null;
+  /**
+   * Quorum policy revision in force when this read was taken. Recorded so
+   * aggregate decisions can reference the exact policy they were made under,
+   * and so historical captured ballots replay deterministically even after
+   * policy defaults change.
+   */
+  policyRevision: string;
 }
+
+/**
+ * Stable reference for the quorum policy revision that peer reads are
+ * recorded under. Pinned explicitly so that changing defaults elsewhere does
+ * not silently rewrite the revision attached to previously captured ballots.
+ */
+export const PEER_REASONING_POLICY_REVISION = "quorum-policy/v1";
 
 interface ReasoningResponse {
   reasoning?: string;
@@ -62,12 +76,14 @@ export async function buyPeerReasoning(args: {
   readsPerPersona: number;
   capUsdc: number;
   delayMs: number;
+  policyRevision?: string;
 }): Promise<PeerReasoningRead[]> {
   if (args.readsPerPersona <= 0) return [];
 
   const payer = payingWalletForPersona(args.buyer);
   if (!payer) return [];
 
+  const policyRevision = args.policyRevision ?? PEER_REASONING_POLICY_REVISION;
   let remainingUnits = usdcToUnits(args.capUsdc);
   const sellers = selectPeerSellers(
     args.buyer,
@@ -103,6 +119,7 @@ export async function buyPeerReasoning(args: {
         sellerName: body.persona?.name ?? seller.displayName,
         reasoning: reasoning.slice(0, 360),
         pricePaidUnits: result.payment?.priceUnits?.toString() ?? null,
+        policyRevision,
       });
 
       if (result.payment) {

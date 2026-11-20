@@ -46,6 +46,12 @@ export interface ClaimOnChain {
   challengerAddresses:  readonly string[];
   /** Individual challenger stakes in display USDC, for the whale rule. */
   challengerStakes:     readonly number[];
+  /**
+   * Quorum policy revision in force when this claim's aggregate decision was
+   * recorded. Stable across policy default changes so historical ballots replay
+   * deterministically against the revision they were captured under.
+   */
+  quorumPolicyRevision?: number;
 }
 
 /**
@@ -78,6 +84,11 @@ export interface PersonaDecision {
     | "no-evidence"
     | "stale-evidence"
     | "llm-failed";
+  /**
+   * Quorum policy revision the decision was evaluated under. Recorded so an
+   * aggregate decision can be replayed deterministically later.
+   */
+  quorumPolicyRevision?: number;
 }
 
 /**
@@ -93,6 +104,11 @@ export interface PersonaRunnerContext {
   contractId:       string;
   evidenceCache:    Map<number, EvidenceCacheEntry>;
   peerReasoning?:   Map<string, string[]>;
+  /**
+   * Quorum policy revision pinned for this cycle. Stable reference: if defaults
+   * change mid-cycle the pinned revision is still used for every decision.
+   */
+  quorumPolicyRevision?: number;
 }
 
 /**
