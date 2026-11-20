@@ -6,7 +6,10 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "test:node": "node scripts/run-node-tests.mjs"
+    "test:node": "node scripts/run-node-tests.mjs",
+    "test:api-fixtures": "node scripts/run-node-tests.mjs api-contract-fixtures",
+    "check:api-fixtures": "node --import tsx scripts/check-api-contract-fixtures.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

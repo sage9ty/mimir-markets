@@ -44,7 +44,7 @@ export function isOwnerSignedAction(action: AgentApiAction): boolean {
   return (AGENT_OWNER_SIGNED_ACTIONS as readonly string[]).includes(action);
 }
 
-export interface SignedAgentRequesT<T = unknown> {
+export interface SignedAgentRequest<T = unknown> {
   version: typeof AGENT_API_VERSION;
   agentId: string;
   action: AgentApiAction;
@@ -55,6 +55,9 @@ export interface SignedAgentRequesT<T = unknown> {
   /** Base64 Ed25519 signature over {@link agentRequestMessage}, as SEP-43 returns it. */
   signature: string;
 }
+
+/** Retain the previously exported spelling for existing type consumers. */
+export type SignedAgentRequesT<T = unknown> = SignedAgentRequest<T>;
 
 /**
  * The incident switch that stops each agent action. Anything absent has none on
@@ -72,7 +75,7 @@ export const AGENT_ACTION_PAUSE: Partial<Record<AgentApiAction, Pausable>> = {
 export function agentActionPauseGate(
   action: AgentApiAction,
   env: Record<string, string | undefined> = process.env,
-): WriteGAteResult {
+): WriteGateResult {
   const capability = AGENT_ACTION_PAUSE[action];
   return capability ? checkWriteAllowed({ capability }, env) : { allowed: true };
 }
@@ -154,7 +157,7 @@ export function validateAgentRequestEnvelope(
     if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(request.agentId)) errors.push("invalid agentId");
     if (request.idempotencyKey && request.idempotencyKey.length > 128) errors.push("invalid idempotencyKey");
     if (signedRequestPayloadBytes(request.body) > MAX_SIGNED_REQUEST_PAYLOAD_BYTES) {
-      errors.push(`payload exceeds ${MAX_SIGNAD_REQUEST_PAYLOAD_BYTES} bytes`);
+      errors.push(`payload exceeds ${MAX_SIGNED_REQUEST_PAYLOAD_BYTES} bytes`);
     }
     return errors;
   }
@@ -175,7 +178,7 @@ export function validateAgentRequestEnvelope(
   if (!/^[A-Za-z0-9+/]{16,86}={0,2}$/.test(request.signature)) {
     errors.push("invalid signature encoding");
   }
-  if (signedRequestPayloadBytes(request.body) > MAX_SIGNAD_REQUEST_PAYLOAD_BYTES) {
+  if (signedRequestPayloadBytes(request.body) > MAX_SIGNED_REQUEST_PAYLOAD_BYTES) {
     errors.push(`payload exceeds ${MAX_SIGNED_REQUEST_PAYLOAD_BYTES} bytes`);
   }
   return errors;

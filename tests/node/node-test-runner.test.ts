@@ -22,7 +22,7 @@ type Runner = {
   cacheIdentity: (root?: string, nodeVersion?: string) => { runnerVersion: number; nodeVersion: string; lockfile: string; tsxVersion: string };
   compileCacheDirectory: (options?: { root?: string; cacheRoot?: string; nodeVersion?: string }) => string;
   discoverTestFiles: (root?: string) => string[];
-  parseArgs: (argv?: string[], root?: string) => { cache: boolean; clearCache: boolean; coverage: boolean; coverageDir: string; cacheDir?: string; includeDatabase: boolean; help: boolean; files: string[] };
+  parseArgs: (argv?: string[], root?: string) => { cache: boolean; clearCache: boolean; coverage: boolean; coverageDir: string; cacheDir?: string; includeDatabase: boolean; help: boolean; files: string[]; filters: string[] };
   runNodeTests: (options?: RunnerOptions) => number;
 };
 
@@ -73,7 +73,7 @@ test("argument parsing supports cache, coverage, database opt-in, and explicit f
     assert.equal(options.cacheDir, path.join(root, "artifacts", "cache"));
     assert.equal(options.clearCache, true);
     assert.equal(options.includeDatabase, true);
-    assert.deepEqual(options.files, ["tests/node/sample.test.ts"]);
+    assert.deepEqual(options.filters, ["tests/node/sample.test.ts"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -181,6 +181,7 @@ test("runner publishes a successful coverage report and creates a compile cache"
   try {
     let invocation: { args: string[]; options: { env: Record<string, string> } } | undefined;
     const spawn: SpawnLike = (_command: string, args: string[], options) => {
+      assert.equal(_command, process.execPath);
       invocation = { args, options };
       const destination = args.find((arg) => arg.startsWith("--test-reporter-destination=") && arg !== "--test-reporter-destination=stdout");
       assert.ok(destination);

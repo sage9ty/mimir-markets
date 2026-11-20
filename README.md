@@ -1127,6 +1127,12 @@ Every env var lives in `.env.example`. Quick reference:
 
 ### Node test workflow
 
+Independent clients can use the deterministic JSON exchanges in
+[`fixtures/api-contract/v1.json`](fixtures/api-contract/v1.json). See
+[`docs/API_CONTRACT_FIXTURES.md`](docs/API_CONTRACT_FIXTURES.md) for offline use,
+stable errors, boundary cases and the rendered response example. Verify them with
+`npm run check:api-fixtures` and `npm run test:api-fixtures`.
+
 `npm run test:node` is the release-safe full Node suite. It discovers every
 `tests/node/*.test.ts` file, keeps Node's process-per-file isolation, and uses a
 compile-only cache under `.cache/node-tests`. The cache is keyed by Node,
