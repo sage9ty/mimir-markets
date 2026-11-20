@@ -234,6 +234,74 @@ export interface WalletContextValue {
 
   /** Rows for the picker modal, already ordered. */
   wallets: ModalWallet[];
+
+  /**
+   * A resumable setup action the caller asked for before the wallet was
+   * ready (#769). Non-null while a trustline setup is pending; the caller's
+   * `resume()` runs exactly once after the trustline is confirmed on chain.
+   */
+  pendingTrustlineIntent: PendingTrustlineIntent | null;
+
+  /**
+   * Request a USDC trustline and resume `onReady` **only** once it is
+   * confirmed on chain. If the user leaves mid-flow, the intent is persisted
+   * to `sessionStorage` and resumed on provider mount. The classic trustline
+   * transaction is submitted independently of any Soroban staking call.
+   */
+  requestTrustlineThen: (onReady: () => void) => Promise<void>;
+}
+
+/**
+ * In-memory handle to a pending trustline intent. The callback is not
+ * persisted — only the fact that an intent exists and the address it belongs
+ * to are. On remount the callback is re-registered by the caller, so a reload
+ * still resumes the original intent through `onReady`.
+ */
+export interface PendingTrustlineIntent {
+  address: string;
+  resume: () => void;
+}
+
+/**
+ * `sessionStorage` key for the persisted intent. Non-sensitive: address only.
+ *
+ * Written with a namespaced prefix so it cannot collide with any other
+ * resumable-flow key another feature may add later.
+ */
+const PENDING_TRUSTLINE_KEY = "mimir.pendingTrustlineIntent.v1";
+
+function readPendingTrustline(): { address: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_TRUSTLINE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { address?: unknown };
+    if (typeof parsed?.address !== "string" || parsed.address.length === 0) return null;
+    return { address: parsed.address };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingTrustline(address: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      PENDING_TRUSTLINE_KEY,
+      JSON.stringify({ address }),
+    );
+  } catch {
+    // sessionStorage can be disabled; the in-memory intent still works.
+  }
+}
+
+function clearPendingTrustline(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(PENDING_TRUSTLINE_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 type ModalWallet = ShapedWallet & { connect: () => void };
@@ -267,6 +335,8 @@ const Ctx = createContext<WalletContextValue>({
   canSignAuthEntries: false,
   networkWarning: null,
   wallets: [],
+  pendingTrustlineIntent: null,
+  requestTrustlineThen: async () => {},
 });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -547,6 +617,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [pickerLoading, setPickerLoading] = useState(false);
   const [options, setOptions] = useState<ShapedWallet[]>([]);
   const [recentId, setRecentId] = useState<string | null>(null);
+  const [pendingTrustlineIntent, setPendingTrustlineIntent] = useState<PendingTrustlineIntent | null>(null);
 
   // Read by the signing callbacks, which must stay referentially stable so the
   // memoised `signer` does not change identity on every render.
@@ -563,6 +634,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * kit's memory, unlike `fetchAddress`, which asks the extension.
    */
   useEffect(() => {
+    // Restore a persisted trustline intent (#769). Non-null means the caller
+    // previously asked for a trustline setup that had not finished; the UI
+    // shows the "add trustline" gate and the caller re-registers its resume
+    // callback when it mounts. No resume callback is called here: only the
+    // caller knows what the intent was for.
+    const persisted = readPendingTrustline();
+    if (persisted) {
+      setPendingTrustlineIntent({ address: persisted.address, resume: () => {} });
+    }
+
     let cancelled = false;
 
     (async () => {
@@ -849,6 +930,44 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       .catch(() => undefined);
   }, []);
 
+  const requestTrustlineThen = useCallback(
+    async (onReady: () => void) => {
+      if (!address || !signer) {
+        throw new Error(NO_WALLET);
+      }
+
+      // Persist the intent BEFORE submitting so a crash / reload between
+      // submission and confirmation still resumes the user's original action.
+      writePendingTrustline(address);
+      setPendingTrustlineIntent({ address, resume: onReady });
+
+      // The classic trustline transaction is submitted on its own — this is
+      // deliberately NOT part of any Soroban staking call (#769).
+      const submit = await import("./stellar-trustline");
+      const submitted = await submit.submitUsdcTrustline(signer);
+      if (submitted.status === "failed") {
+        clearPendingTrustline();
+        setPendingTrustlineIntent(null);
+        throw new Error(submitted.reason);
+      }
+
+      // Confirm by re-reading the trustline until Horizon shows it. Do not
+      // resume on submission — the whole point is that "submitted" is not
+      // "ready".
+      const confirmed = await submit.awaitUsdcTrustlineConfirmation(address);
+      if (confirmed.status === "confirmed") {
+        clearPendingTrustline();
+        setPendingTrustlineIntent(null);
+        onReady();
+        return;
+      }
+      clearPendingTrustline();
+      setPendingTrustlineIntent(null);
+      throw new Error(confirmed.reason);
+    },
+    [address, signer],
+  );
+
   const wallets = useMemo<ModalWallet[]>(
     () =>
       options.map((wallet) => ({
@@ -877,6 +996,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       networkWarning,
       transactionState,
       wallets,
+      pendingTrustlineIntent,
+      requestTrustlineThen,
     }),
     [
       address,
@@ -893,6 +1014,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       networkWarning,
       transactionState,
       wallets,
+      pendingTrustlineIntent,
+      requestTrustlineThen,
     ],
   );
 

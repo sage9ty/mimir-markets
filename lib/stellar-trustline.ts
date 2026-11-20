@@ -194,3 +194,123 @@ export async function ensureUsdcTrustline(
   const result = await horizon.submitTransaction(signed);
   return { added: true, hash: result.hash };
 }
+
+
+// ── Decoupled submit / confirm (#769) ────────────────────────────────────────
+//
+// `ensureUsdcTrustline` above awaits `horizon.submitTransaction` and returns
+// after the tx is already in a ledger. That is fine for a caller that stays
+// on the screen, but a *resumable* setup needs the two steps separate: the
+// classic trustline transaction must be submittable on its own, and the
+// caller must be able to leave and come back before we treat it as ready.
+//
+// The two functions below provide that split without changing
+// `ensureUsdcTrustline` — its behaviour and return shape are byte-identical.
+
+/** Terminal or in-flight state of a decoupled trustline submission. */
+export type TrustlineTransactionOutcome =
+  | { status: "submitted"; hash: string }
+  | { status: "confirmed"; hash: string }
+  | { status: "failed"; reason: string };
+
+/**
+ * Build, sign and submit the classic USDC changeTrust — and stop there.
+ *
+ * The returned `hash` identifies the submission so the caller can persist
+ * `pendingTrustlineIntent` and await confirmation later. No polling, no
+ * confirmation wait: the caller decides when to call
+ * {@link awaitUsdcTrustlineConfirmation}.
+ *
+ * An account that already holds the trustline is a no-op that returns the
+ * "submitted" state with a synthetic hash so callers have one shape to
+ * handle. The intent behind this (#769) is idempotency, not a real ledger
+ * write, so no signature is prompted.
+ */
+export async function submitUsdcTrustline(
+  signer: StellarSigner,
+): Promise<TrustlineTransactionOutcome> {
+  const existing = await readUsdcTrustline(signer.publicKey);
+  if (existing.status === "ready") {
+    return { status: "submitted", hash: "" };
+  }
+  if (existing.status === "unfunded") {
+    return {
+      status: "failed",
+      reason:
+        "This account does not exist on the Stellar ledger yet. Fund it with XLM first, then add the USDC trustline.",
+    };
+  }
+
+  const horizon = createHorizonServer();
+  const account = await horizon.loadAccount(signer.publicKey);
+
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(Operation.changeTrust({ asset: usdcAsset() }))
+    .setTimeout(180)
+    .build();
+
+  const { signedTxXdr } = await signer.signTransaction(transaction.toXDR(), {
+    networkPassphrase: NETWORK_PASSPHRASE,
+    address: signer.publicKey,
+  });
+
+  const signed = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
+  try {
+    const result = await horizon.submitTransaction(signed);
+    return { status: "submitted", hash: result.hash };
+  } catch (cause) {
+    return {
+      status: "failed",
+      reason:
+        cause instanceof Error
+          ? cause.message
+          : "Trustline submission failed.",
+    };
+  }
+}
+
+/**
+ * Wait until the USDC trustline is present on chain, or fail.
+ *
+ * Polls the same Horizon read used by {@link readUsdcTrustline}; it does not
+ * re-read the transaction hash. That is deliberate: the *observable* fact the
+ * caller needs is "can this account hold USDC now?", which is exactly what
+ * `readUsdcTrustline` answers. A trustline that appeared via another tab,
+ * another device, or a wallet's built-in helper is the same outcome and must
+ * resume the intent the same way.
+ *
+ * Bounded by `timeoutMs` (default 60s) so a stalled Horizon cannot hang a
+ * resumption forever. Returns `{ status: "confirmed" }` as soon as the line
+ * is present, and `{ status: "failed" }` on timeout or an unfunded account.
+ */
+export async function awaitUsdcTrustlineConfirmation(
+  address: string,
+  options: { timeoutMs?: number; intervalMs?: number; loadAccount?: HorizonAccountLoader } = {},
+): Promise<TrustlineTransactionOutcome> {
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const intervalMs = options.intervalMs ?? 2_000;
+  const loader = options.loadAccount;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const state = await readUsdcTrustline(address, loader ? { loadAccount: loader } : {});
+    if (state.status === "ready") {
+      return { status: "confirmed", hash: "" };
+    }
+    if (state.status === "unfunded") {
+      return {
+        status: "failed",
+        reason: "Account is not funded on the Stellar ledger.",
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return {
+    status: "failed",
+    reason: `Trustline did not appear within ${timeoutMs}ms.`,
+  };
+}
