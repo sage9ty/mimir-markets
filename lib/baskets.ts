@@ -275,6 +275,8 @@ export interface NavMember {
   mode: string;
   paused?: boolean;
   stale?: boolean;
+  /** Per-period returns for this member, as decimals (e.g. 0.01 = +1%). */
+  returns: number[];
 }
 export interface BasketReturnPoint { timestamp: number; returnsBps: Record<string, number> }
 export interface BasketPolicy { maxSingleAgentBps: number; maxCategoryBps: number; staleSignalAction: "skip" | "pause"; failedCopyAction: "keep_idle" | "pause" }
@@ -423,4 +425,90 @@ function completeSeries(members: readonly NavMember[], periods: number): boolean
   return members.every((m) =>
     m.returns.slice(0, periods).every((r) => Number.isFinite(r)),
   );
+}
+
+/** Stellar Testnet USDC SAC decimals (7, not 6). */
+export const MIRROR_USDC_DECIMALS = 7;
+
+/** 1 USDC in atomic units (10^7). */
+export const MIRROR_USDC_UNIT = 10_000_000n;
+
+/**
+ * Convert a non-negative USDC amount into exact 7-decimal atomic units.
+ *
+ * - `bigint` inputs are treated as already-atomic units.
+ * - `string` inputs are parsed as decimal USDC with up to 7 fractional digits.
+ * - `number` inputs are normalized to 7 fixed decimal places before integer parsing
+ *   to avoid IEEE-754 representation artifacts (e.g. `0.1 + 0.2`).
+ */
+export function toUsdcAtomic(amount: bigint | string | number): bigint {
+  if (typeof amount === "bigint") {
+    if (amount < 0n) throw new Error("USDC amount must be non-negative");
+    return amount;
+  }
+  if (typeof amount === "number") {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error("USDC amount must be a finite non-negative number");
+    }
+    const [whole, fraction = ""] = amount.toFixed(MIRROR_USDC_DECIMALS).split(".");
+    return BigInt(whole) * MIRROR_USDC_UNIT + BigInt(fraction.padEnd(MIRROR_USDC_DECIMALS, "0"));
+  }
+  const trimmed = amount.trim();
+  if (!/^\d+(?:\.\d{1,7})?$/.test(trimmed)) {
+    throw new Error("Invalid USDC amount");
+  }
+  const [whole, fraction = ""] = trimmed.split(".");
+  return BigInt(whole) * MIRROR_USDC_UNIT + BigInt(fraction.padEnd(MIRROR_USDC_DECIMALS, "0"));
+}
+
+/**
+ * Compute the exact atomic mirror stake for a subscriber's per-market budget
+ * scaled by a basket member's basis-point weight.
+ *
+ * Uses integer division (`(budgetAtomic * weightBps) / 10_000n`) so the result
+ * never suffers floating-point drift or rounds up past the subscriber's cap.
+ * Returns `0n` for invalid or non-positive inputs.
+ */
+export function computeMirrorAmountAtomic(
+  perMarketUsdc: bigint | string | number,
+  weightBps: number,
+): bigint {
+  if (!isValidBps(weightBps) || weightBps === 0) return 0n;
+  let budgetAtomic: bigint;
+  try {
+    budgetAtomic = toUsdcAtomic(perMarketUsdc);
+  } catch {
+    return 0n;
+  }
+  if (budgetAtomic <= 0n) return 0n;
+  return (budgetAtomic * BigInt(weightBps)) / 10_000n;
+}
+
+/**
+ * Format an exact 7-decimal atomic USDC string (or bigint) for display in a
+ * UI consumer without passing through IEEE-754 floats.
+ *
+ * When `fixedDecimals` is provided, renders exactly that many fractional digits
+ * (truncated toward zero, e.g. `"6666000"` with `2` -> `"0.66"`). When omitted,
+ * renders the exact decimal value with trailing fractional zeros stripped
+ * (e.g. `"6666000"` -> `"0.6666"`).
+ */
+export function formatMirrorAtomicUsdc(
+  atomic: string | bigint,
+  fixedDecimals?: number,
+): string {
+  const value = typeof atomic === "bigint" ? atomic : BigInt(atomic);
+  const sign = value < 0n ? "-" : "";
+  const abs = value < 0n ? -value : value;
+  const whole = abs / MIRROR_USDC_UNIT;
+  const rawFraction = (abs % MIRROR_USDC_UNIT).toString().padStart(MIRROR_USDC_DECIMALS, "0");
+
+  if (fixedDecimals !== undefined) {
+    const digits = Math.max(0, Math.min(MIRROR_USDC_DECIMALS, Math.trunc(fixedDecimals)));
+    if (digits === 0) return `${sign}${whole}`;
+    return `${sign}${whole}.${rawFraction.slice(0, digits)}`;
+  }
+
+  const trimmed = rawFraction.replace(/0+$/, "");
+  return trimmed ? `${sign}${whole}.${trimmed}` : `${sign}${whole}`;
 }
