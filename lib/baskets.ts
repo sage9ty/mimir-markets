@@ -18,15 +18,104 @@ import { isValidBps } from "./money";
  * This means a captured basket-creation signature cannot be replayed to
  * insert duplicate baskets.
  */
+export class BasketValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly agentId?: string,
+    public readonly weights?: number[],
+  ) {
+    super(message);
+    this.name = "BasketValidationError";
+  }
+}
+
+export interface BasketMember {
+  agentId: string;
+  weightBps: number;
+}
+
+/**
+ * Reject duplicate members carrying conflicting weights (#894).
+ *
+ * A basket composition is valid iff every agentId appears at most once, OR
+ * appears multiple times with the *identical* weight (which collapses to a
+ * single entry — the deterministic canonical form).
+ *
+ * Deterministic and side-effect free: the error names the offending agentId
+ * and the conflicting weights, but no timestamps, orderings, or host data.
+ */
+export function validateBasketComposition(members: readonly BasketMember[]): void {
+  const byAgent = new Map<string, number[]>();
+  for (const member of members) {
+    if (typeof member.agentId !== "string" || member.agentId.length === 0) {
+      throw new BasketValidationError("basket member has empty agentId");
+    }
+    if (!Number.isInteger(member.weightBps) || member.weightBps <= 0) {
+      throw new BasketValidationError(
+        "basket member weightBps must be a positive integer",
+        member.agentId,
+        [member.weightBps],
+      );
+    }
+    const weights = byAgent.get(member.agentId) ?? [];
+    weights.push(member.weightBps);
+    byAgent.set(member.agentId, weights);
+  }
+  for (const [agentId, weights] of byAgent) {
+    if (weights.length > 1 && new Set(weights).size > 1) {
+      throw new BasketValidationError(
+        `duplicate basket member ${agentId} carries conflicting weights: ${weights.join(", ")}`,
+        agentId,
+        weights.slice(),
+      );
+    }
+  }
+}
+
+/**
+ * Return the canonical member ordering, collapsing identical-weight duplicates.
+ *
+ * Sort key: agentId ascending; tie-break by weightBps ascending. Two baskets
+ * with the same members produce byte-identical canonical arrays regardless of
+ * input order. Call ONLY after validateBasketComposition() has passed.
+ */
+export function canonicalizeMembers(members: readonly BasketMember[]): BasketMember[] {
+  const byAgent = new Map<string, number>();
+  for (const member of members) {
+    const existing = byAgent.get(member.agentId);
+    if (existing === undefined) {
+      byAgent.set(member.agentId, member.weightBps);
+    } else if (existing !== member.weightBps) {
+      // Defensive: validateBasketComposition should have rejected this.
+      throw new BasketValidationError(
+        `canonicalizeMembers received conflicting weights for ${member.agentId}`,
+        member.agentId,
+        [existing, member.weightBps],
+      );
+    }
+  }
+  return [...byAgent.entries()]
+    .map(([agentId, weightBps]) => ({ agentId, weightBps }))
+    .sort((a, b) => {
+      if (a.agentId !== b.agentId) return a.agentId < b.agentId ? -1 : 1;
+      return a.weightBps - b.weightBps;
+    });
+}
+
 export function basketMessage(args: {
   name: string; creator: string; members: Array<{ agentId: string; weightBps: number }>;
   nonce: string; expiresAt: number;
 }): string {
+  // Validate before serialization (#894): a signed message must not carry a
+  // contradictory composition. Canonicalize so signature bytes are stable
+  // regardless of the caller's array order.
+  validateBasketComposition(args.members);
+  const canonicalMembers = canonicalizeMembers(args.members);
   return [
     "Mimir basket",
     `name: ${args.name}`,
     `creator: ${args.creator}`,
-    `members: ${args.members.map((m) => `${m.agentId}:${m.weightBps}`).join(",")}`,
+    `members: ${canonicalMembers.map((m) => `${m.agentId}:${m.weightBps}`).join(",")}`,
     `nonce: ${args.nonce}`,
     `expiresAt: ${new Date(args.expiresAt).toISOString()}`,
   ].join("\n");
@@ -219,10 +308,6 @@ export interface BasketExposurePreview {
   agentBars: BasketExposureBar[];
   errors: string[];
   policy: BasketPolicy;
-}
-
-  /** Per-period returns for this member, as decimals (e.g. 0.01 = +1%). */
-  returns: number[];
 }
 
 /**
