@@ -514,6 +514,29 @@ export function useVsDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchVs, fetchActivity, inviteKey, isSampleVS, vsId]);
 
+  // ── Account-switch guard (#922) ───────────────────────────────────────────
+  //
+  // `address` may change at any time: the WalletProvider now re-reads the
+  // active account on window focus (lib/wallet.tsx). When it changes, the
+  // previous account's signed authorization is no longer valid — but the
+  // user's draft (challengeStake, typed text) is harmless and must survive.
+  //
+  // We expose `authorizationClearedFor` so the submit path can tell the user
+  // "review and re-authorize" until a fresh signature is obtained for the
+  // current account. Nothing in this file signs anything; the gate is the
+  // parent component's responsibility, driven by this field.
+  const lastAddressRef = useRef<string | null>(null);
+  const [authorizationClearedFor, setAuthorizationClearedFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    const previous = lastAddressRef.current;
+    lastAddressRef.current = address ?? null;
+    if (previous !== null && previous !== address) {
+      // Signed intent cleared; draft kept (challengeStake is not touched).
+      setAuthorizationClearedFor(address ?? null);
+    }
+  }, [address]);
+
   // ── Return ────────────────────────────────────────────────────────────────
 
   return {
@@ -529,5 +552,6 @@ export function useVsDetail({
     activity,
     activityLoading,
     activityError,
+    authorizationClearedFor,
   };
 }

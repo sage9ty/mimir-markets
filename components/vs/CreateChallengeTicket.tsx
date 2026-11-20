@@ -54,6 +54,10 @@ export type CreateChallengeTicketProps = {
   maxAmount?: number;
   /** Query string de la URL actual (p. ej. `window.location.search`). */
   searchParams?: string;
+  /** True when the connected account has changed since the last signed intent.
+   *  The ticket shows a review banner and hides the SIGNED watermark; the
+   *  parent is responsible for gating submission until re-authorization. */
+  accountChanged?: boolean;
 };
 
 /**
@@ -70,6 +74,7 @@ export default function CreateChallengeTicket({
   walletAddress,
   maxAmount,
   searchParams,
+  accountChanged = false,
 }: CreateChallengeTicketProps) {
   const t = useTranslations("create");
 
@@ -111,10 +116,19 @@ export default function CreateChallengeTicket({
 
   return (
     <div className={CREATE_TICKET_SHELL_CLASS}>
+      {accountChanged ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="border-b border-pv-amber/40 bg-pv-amber/10 px-4 py-2 text-xs text-pv-text"
+        >
+          Account changed — review and re-authorize before submitting.
+        </div>
+      ) : null}
       {/* Watermark — transitions from UNSIGNED to SIGNED based on wallet */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden">
         <span className={CREATE_TICKET_WATERMARK_CLASS}>
-          {walletAddress ? "SIGNED" : "UNSIGNED"}
+          {accountChanged ? "UNSIGNED" : walletAddress ? "SIGNED" : "UNSIGNED"}
         </span>
       </div>
       <div

@@ -717,6 +717,49 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   }, [address]);
 
+  /**
+   * Detect a wallet account switch (#922).
+   *
+   * `stellar-wallets-kit` does not push account changes: the `address` state
+   * above is only set on connect / restore / disconnect. When the user switches
+   * accounts inside Freighter (or any injected wallet), that state stays on the
+   * previous account — so any flow that signed intent for account A can silently
+   * submit against account B. This effect re-reads the kit's current address on
+   * window focus and on tab visibility restore, and calls `setAddress` only when
+   * it has actually changed. No behaviour changes for users who never switch.
+   */
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+
+    const check = async () => {
+      try {
+        const kit = await loadKit();
+        const { address: current } = await kit.getAddress();
+        if (cancelled || !current || current === address) return;
+        setAddress(current);
+        setWalletId(kit.selectedModule.productId);
+        setWalletName(kit.selectedModule.productName);
+        console.info("[wallet] ACCOUNT_SWITCH_DETECTED", { from: address, to: current });
+      } catch {
+        // getAddress is a best-effort read; a failure is not an account switch.
+      }
+    };
+
+    const onFocus = () => void check();
+    const onVis = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [address]);
+
   // ── Signing ────────────────────────────────────────────────────────────────
 
   const signTransaction = useCallback<SignTransaction>(
