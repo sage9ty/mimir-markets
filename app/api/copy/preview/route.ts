@@ -57,6 +57,7 @@ function parsePreviewInput(value: unknown, now: number): {
   if (!amount(usage.usedTodayUsdc) || !amount(usage.usedThisWeekUsdc) ||
       !amount(usage.openExposureUsdc) ||
       typeof usage.realizedLossAtomic !== "string" || !decimal.test(usage.realizedLossAtomic) ||
+      typeof usage.principalAtRiskAtomic !== "string" || !decimal.test(usage.principalAtRiskAtomic) ||
       !numbers(c.existingClaimIds, 1000) || !strings(c.ancestryAgentIds, 16) ||
       typeof c.configuredUsdc !== "string" || typeof c.configuredSpender !== "string" ||
       typeof c.onchainAllowanceAtomic !== "string" || !decimal.test(c.onchainAllowanceAtomic)) return null;

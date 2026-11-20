@@ -2,11 +2,27 @@
  * Copy trading policy and deterministic execution gate.
  *
  * Every USDC figure that crosses a boundary here is atomic at **7 decimals**
- * (`lib/usdc.ts`), not the 6 the EVM-era ERC-20 used. `maxRealizedLossAtomic` and
- * `realizedLossAtomic` are the two fields where that matters, because they are the
- * only ones supplied as atomic strings rather than derived from a display number
- * through `parseUsdcAtomic` — a 6-decimal value there reads as a tenth of the
- * intended limit and stops copying ten times too early.
+ * (`lib/usdc.ts`), not the 6 the EVM-era ERC-20 used. `maxRealizedLossAtomic`,
+ * `realizedLossAtomic`, and `principalAtRiskAtomic` are the fields where that
+ * matters, because they are the only ones supplied as atomic strings rather than
+ * derived from a display number through `parseUsdcAtomic` — a 6-decimal value
+ * there reads as a tenth of the intended limit and stops copying ten times too
+ * early.
+ *
+ * Principal-at-risk vs realized loss
+ * ───────────────────────────────────
+ * `realizedLossAtomic`    — settled losses only. Sourced from settlement/payout
+ *                           outcomes, NOT from execution audit rows (which carry
+ *                           spend but not resolution).
+ * `principalAtRiskAtomic` — the sum of stakes in open (unclosed) copy positions.
+ *                           These have not yet resolved; treating them as already
+ *                           realized would understate available headroom.
+ *
+ * The loss gate checks:
+ *   realizedLossAtomic + principalAtRiskAtomic + stakeAtomic ≤ maxRealizedLossAtomic
+ *
+ * This keeps worst-case total exposure bounded while correctly distinguishing what
+ * has been lost from what is merely at risk in open positions.
  */
 
 import { sha256Hex } from "@/lib/content-hash";
@@ -30,7 +46,8 @@ export interface CopyPermission {
   weeklyCapUsdc: number;
   totalOpenExposureUsdc: number;
   /**
-   * Maximum realized loss plus the full principal at risk of the next copy.
+   * Ceiling for the sum of settled losses and open principal at risk.
+   * The gate checks: `realizedLossAtomic + principalAtRiskAtomic + stakeAtomic ≤ maxRealizedLossAtomic`.
    * Atomic USDC at 7 decimals — 15 USDC is `"150000000"`.
    */
   maxRealizedLossAtomic: string;
@@ -49,8 +66,19 @@ export interface CopyUsage {
   usedTodayUsdc: number;
   usedThisWeekUsdc: number;
   openExposureUsdc: number;
-  /** Atomic USDC at 7 decimals. */
+  /**
+   * Settled (realized) losses only, in atomic USDC at 7 decimals.
+   * Must come from settlement/payout outcomes — NOT from execution audit rows,
+   * which carry spend but not resolution.
+   */
   realizedLossAtomic: string;
+  /**
+   * Sum of stakes in open (unclosed) copy positions, in atomic USDC at 7 decimals.
+   * These are principal at risk: they have not yet resolved and must NOT be
+   * counted as realized loss. The loss gate adds this to `realizedLossAtomic`
+   * before comparing against `maxRealizedLossAtomic`.
+   */
+  principalAtRiskAtomic: string;
 }
 
 export interface CopySignal {
@@ -190,6 +218,8 @@ export function evaluateCopy(permission: CopyPermission, signal: CopySignal, con
       !Number.isSafeInteger(context.usage.openExposureUsdc * 10_000_000) ||
       typeof context.usage.realizedLossAtomic !== "string" ||
       !/^(0|[1-9]\d*)$/.test(context.usage.realizedLossAtomic) ||
+      typeof context.usage.principalAtRiskAtomic !== "string" ||
+      !/^(0|[1-9]\d*)$/.test(context.usage.principalAtRiskAtomic) ||
       typeof context.onchainAllowanceAtomic !== "bigint" || context.onchainAllowanceAtomic < 0n ||
       typeof context.existingClaimIds?.has !== "function" || !Array.isArray(context.ancestryAgentIds) ||
       !context.ancestryAgentIds.every((id) => typeof id === "string") ||
@@ -248,7 +278,7 @@ export function evaluateCopy(permission: CopyPermission, signal: CopySignal, con
   if (parseUsdcAtomic(context.usage.usedTodayUsdc) + stakeAtomic > parseUsdcAtomic(permission.dailyCapUsdc)) return { allowed: false, reason: "daily_cap" };
   if (parseUsdcAtomic(context.usage.usedThisWeekUsdc) + stakeAtomic > parseUsdcAtomic(permission.weeklyCapUsdc)) return { allowed: false, reason: "weekly_cap" };
   if (parseUsdcAtomic(context.usage.openExposureUsdc) + stakeAtomic > parseUsdcAtomic(permission.totalOpenExposureUsdc)) return { allowed: false, reason: "open_exposure_cap" };
-  if (parseAtomicString(context.usage.realizedLossAtomic) + stakeAtomic > parseAtomicString(permission.maxRealizedLossAtomic)) return { allowed: false, reason: "loss_limit" };
+  if (parseAtomicString(context.usage.realizedLossAtomic) + parseAtomicString(context.usage.principalAtRiskAtomic) + stakeAtomic > parseAtomicString(permission.maxRealizedLossAtomic)) return { allowed: false, reason: "loss_limit" };
   const spend = permission.spendPermission;
   const requiredAtomic = stakeAtomic;
   // Exact comparison: a Stellar contract id / account is case-sensitive base32,
@@ -325,7 +355,8 @@ function atomicToDisplayUsdc(atomic: bigint): number {
  * Realized loss is NOT part of this result: audit rows carry spend, not
  * settlement outcomes, so feeding the loss ceiling from here would understate
  * risk. Callers building a `CopyUsage` from this must supply
- * `realizedLossAtomic` from the settlement source.
+ * `realizedLossAtomic` from the settlement source and `principalAtRiskAtomic`
+ * as the sum of stakes still in open positions.
  *
  * Throws only if a window total exceeds display precision.
  */
