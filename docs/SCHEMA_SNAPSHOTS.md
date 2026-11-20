@@ -12,7 +12,10 @@ npm run check:schema-snapshot -- --write # regenerate after a reviewed change
 ```
 
 The check is pure: no `DATABASE_URL`, no network, no seeds, and no production
-secrets. It exports the schema definition (`getSchemaStatements()`), rebuilds the
+secrets. Because it performs no database access, it is safe to run as a read-only
+check ahead of any restore preview; a preview must not write to the database, and the
+schema fingerprint and table/index names reported here are the baseline a preview
+compares against. It exports the schema definition (`getSchemaStatements()`), rebuilds the
 snapshot in memory, and compares it with the committed artifact at
 `schemas/db-schema.snapshot.json`.
 
