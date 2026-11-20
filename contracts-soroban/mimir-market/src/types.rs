@@ -313,6 +313,55 @@ pub struct CreateParams {
     pub agent_owner_recipient: Option<Address>,
 }
 
+// ── Claim transition preflight (#779) ───────────────────────────────────────
+
+/// Why a claim transition would be refused.
+///
+/// Structural eligibility is separated from signed execution: this enum names
+/// only what is wrong *now* with the claim as observed on chain. It says
+/// nothing about whether a subsequent signed `resolve_claim` would succeed
+/// (the oracle still has to authorize it, and the verdict still has to
+/// validate) — see [`ClaimPreflight::requires_oracle_auth`].
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreflightReason {
+    /// Claim is not `Active` (it may be Open, Resolved, or Cancelled).
+    NotActive = 0,
+    /// Claim is Active but its deadline has not yet been reached.
+    NotYetExpired = 1,
+    /// Claim id does not exist.
+    ClaimNotFound = 2,
+}
+
+/// What a read-only preflight of a claim transition would return.
+///
+/// The two booleans separate the two questions a caller needs answered:
+///
+///   - `lifecycle_ok` — is the claim, as currently stored, structurally
+///     eligible for resolution (state + deadline)? This is the exact check
+///     `resolve_claim_versioned` performs, extracted so the two cannot drift.
+///   - `requires_oracle_auth` — will a subsequent signed submission also
+///     require the oracle's authorization? Purely informational: `true` never
+///     means the submission will succeed, only that the signer is required.
+///   - `constraints_ok` — are the public, non-state constraints satisfied
+///     (a bounded resolution summary will fit, etc.)? Empty for callers that
+///     have no candidate payload, `false` only when a candidate payload would
+///     be rejected.
+///
+/// `eligible == lifecycle_ok && constraints_ok` — a convenience so a caller
+/// does not have to re-derive it.
+///
+/// **Read-only.** No `require_auth`, no storage write, no TTL bump, no event.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimPreflight {
+    pub eligible: bool,
+    pub lifecycle_ok: bool,
+    pub constraints_ok: bool,
+    pub requires_oracle_auth: bool,
+    pub missing_reasons: Vec<PreflightReason>,
+}
+
 // ── View return shapes ───────────────────────────────────────────────────────
 
 #[contracttype]
