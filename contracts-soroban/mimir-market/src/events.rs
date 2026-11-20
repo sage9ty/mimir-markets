@@ -283,3 +283,16 @@ pub struct LiquidityUpdated {
     pub available_liquidity: i128,
     pub total_creator_stake: i128,
 }
+
+/// Emitted on every successful market mutation with the claim's explicit
+/// revision after the change. The revision increments only after a successful
+/// state change; a rejected invocation leaves both revision and escrow intact,
+/// so indexers can order mutations and detect gaps without replaying state.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimRevisionUpdated {
+    #[topic]
+    pub id: u64,
+    pub revision: u64,
+    pub escrow: i128,
+}

@@ -11,6 +11,16 @@ Both `mimir-market` and `mimir-squad` contracts emit comprehensive lifecycle eve
 - **Safe agent operations**: Observable triggers for oracle workers and indexers
 - **Audit trail**: Complete history for reconciliation and incident response
 
+## Claim Revision
+
+Every market mutation event for a claim carries an explicit `revision` field (u32). The claim revision is a monotonically increasing counter that is incremented only after a successful state change to that claim. A rejected invocation (failed authorization, invalid lifecycle transition, insufficient escrow, etc.) leaves the revision and escrow unchanged.
+
+**Guarantees:**
+- A new claim starts at revision `0` at creation.
+- Each successful mutation (challenge, resolution, cancellation, deadline transition) increments the revision by exactly `1`.
+- Rejected or reverted invocations do not change the stored revision, state, or escrow.
+- Indexers can use `revision` to detect gaps and order events for the same claim without relying on ledger sequence alone.
+
 ## mimir-market Events
 
 ### Core Lifecycle Events
@@ -23,6 +33,7 @@ Emitted on every claim state change. Tracks transitions between `Open`, `Active`
 - `from_state`: Previous state (u32 enum value)
 - `to_state`: New state (u32 enum value)
 - `timestamp`: Ledger timestamp when transition occurred
+- `revision`: Claim revision after this successful transition
 
 **State Values:**
 - 0 = Open
@@ -44,6 +55,7 @@ Emitted when a claim's deadline passes and it becomes eligible for resolution or
 - `deadline`: The deadline timestamp that was reached
 - `challenger_count`: Number of challengers at deadline
 - `total_staked`: Total funds in escrow (creator + all challengers)
+- `revision`: Claim revision after the deadline transition
 
 **Emitted by:**
 - `transition_deadline`: For unchallenged claims entering cancellation
@@ -59,6 +71,7 @@ Emitted when initial escrow is established or topped up for a claim.
 - `funder` (topic): Address providing the escrow
 - `amount`: USDC amount in atomic units (7 decimals)
 - `escrow_type`: String indicating escrow purpose
+- `revision`: Claim revision after the escrow change
 
 **Escrow Types:**
 - `"creator_stake"`: Creator's initial stake at claim creation
@@ -78,6 +91,7 @@ Emitted on fixed-odds liquidity state changes beyond initial reservations.
 - `reserved_liability`: Total creator liability reserved for all challengers
 - `available_liquidity`: Creator stake remaining after reservations
 - `total_creator_stake`: Original creator stake amount
+- `revision`: Claim revision after the liquidity change
 
 **Emitted by:**
 - Future extensions for dynamic liquidity management
@@ -89,10 +103,10 @@ Emitted on fixed-odds liquidity state changes beyond initial reservations.
 
 The following existing events work together with lifecycle events:
 
-- **ClaimCreated**: Initial claim setup, now paired with `EscrowSeeded`
+- **ClaimCreated**: Initial claim setup (revision `0`), now paired with `EscrowSeeded`
 - **ClaimChallenged**: Challenge acceptance, now paired with `EscrowSeeded` and `ClaimStateTransitioned`
 - **ClaimResolved**: Settlement result, now paired with `ClaimStateTransitioned` and `DeadlineReached`
-- `*ClaimCancelled**: Cancellation completed, now paired with `ClaimStateTransitioned`
+- **ClaimCancelled**: Cancellation completed, now paired with `ClaimStateTransitioned`
 
 ## mimir-squad Events
 
@@ -234,22 +248,23 @@ The following existing events work with lifecycle events:
 
 - **MarketCreated**: Initial market setup
 - **Deposited**: Now paired with `LiquidityAdded`
-- `**Withdrawn**: Now paired with `LiquidityRemoved`
+- **Withdrawn**: Now paired with `LiquidityRemoved`
 - **Resolved**: Now paired with `MarketStateTransitioned` and `MarketDeadlineReached`
 
 ## Squad Market Lifecycle State Machine
 
-For the full state diagram, the caller/authority matrix, and the refund rules for squad markets, see [`SQUAD_LIFECYCLE.md`](./SQUAD_LIFECyCLE.md). That document covers how `cancel_market`, `transition_deadline`, and `resolve` with `RESULT_CANCELLED` interact, and how `claim` treats `RESULT_CANCELLED` as a principal refund.
+For the full state diagram, the caller/authority matrix, and the refund rules for squad markets, see [`SQUAD_LIFECYCLE.md`](./SQUAD_LIFECYCLE.md). That document covers how `cancel_market`, `transition_deadline`, and `resolve` with `RESULT_CANCELLED` interact, and how `claim` treats `RESULT_CANCELLED` as a principal refund.
 
 ## Integration Guidelines
 
 ### For Indexers
 
 1. **State Tracking**: Use `ClaimStateTransitioned` and `MarketStateTransitioned` as the source of truth for lifecycle state
-2. **Conservation Checks**: Sum `EscrowSeeded` amounts and verify against payouts and remaining escrow
-3. **Deadline Monitoring**: Listen to `DeadlineReached` and `MarketDeadlineReached` to identify claims needing oracle attention
-4. **Pool Analytics**: Track `LiquidityAdded` and `LiquidityRemoved` for TVL, liquidity depth charts, and participation patterns
-5. **Fee Recipient Rotation**: Track `FeeRecipientQueued`, `FeeRecipientCancelled`, and `FeeRecipientChanged` to know which address is entitled to accrued fees
+2. **Revision Ordering**: Use the claim `revision` field to order and deduplicate mutation events for the same claim
+3. **Conservation Checks**: Sum `EscrowSeeded` amounts and verify against payouts and remaining escrow
+4. **Deadline Monitoring**: Listen to `DeadlineReached` and `MarketDeadlineReached` to identify claims needing oracle attention
+5. **Pool Analytics**: Track `LiquidityAdded` and `LiquidityRemoved` for TVL, liquidity depth charts, and participation patterns
+6. **Fee Recipient Rotation**: Track `FeeRecipientQueued`, `FeeRecipientCancelled`, and `FeeRecipientChanged` to know which address is entitled to accrued fees
 
 ### For Oracle Workers
 
@@ -278,71 +293,4 @@ Within a single transaction:
 1. **Create**: `EscrowSeeded` → `ClaimCreated` → `FeePolicySnapshotted`
 2. **Challenge**: `EscrowSeeded` → `ClaimStateTransitioned` (if Open → Active) → `FixedOddsLiquidityReserved` (if applicable) → `ClaimChallenged`
 3. **Resolve**: `DeadlineReached` → `ClaimStateTransitioned` (Active → Resolved) → `MarketSettled` → `ClaimResolved` → `VerdictEncoded`
-4. **Cancel**: `ClaimStateTransitioned` (Open → Cancelled) → `ClaimCancelled`
-5. **Pool Deposit**: `LiquidityAdded` → `Deposited`
-6. **Pool Withdraw**: `LiquidityRemoved` → `Withdrawn`
-7. **Pool Resolve**: `MarketDeadlineReached` → `MarketStateTransitioned` → `Resolved`
-8. **Pool Cancel**: `MarketCancelled` (captain-initiated cancellation before deadline)
-9. **Pool Deadline Transition**: `MarketDeadlineReached` → `MarketStateTransitioned` (one-sided pools after deadline)
-8. **Fee Recipient Rotation**: `FeeRecipientQueued` → `FeeRecipientCancelled` → `FeeRecipientChanged`
-
-## Migration Notes
-
-### Compatibility
-
-- Existing indexers continue to work: legacy events (`ClaimCreated`, `ClaimResolved`, etc.) are unchanged
-- New events are additive: no breaking changes to event schemas
-- State enums match existing `ClaimState` and implicit market states
-
-### Rollout
-
-1. Deploy updated contract with new events
-2. Update indexers to subscribe to lifecycle events (old events remain available)
-3. Update oracle workers to use `DeadlineReached` triggers
-4. Backfill: Historical claims have state transitions implicit in existing events
-
-### Accounting Audit
-
-For claims created after lifecycle events deployment:
-
-```
-Sum(EscrowSeeded.amount) = 
-  Sum(ChallengerPaid.net) + 
-  Sum(ClaimCancelled.refund) + 
-  Sum(FeeAccrued.amount) + 
-  MarketSettled.dust + 
-  MarketSettled.owed_to_challengers (if not yet fully claimed)
-```
-
-## Security Considerations
-
-### Event Trust
-
-- **On-chain source of truth**: Events reflect committed storage, not speculative state
-- **No front-running**: Events are emitted after auth checks and state validation
-- `*Idempotent resolution**: Duplicate `resolve_claim` calls with identical inputs do not re-emit events
-
-### Privacy
-
-- **No private data**: Invite key hashes are not exposed in events; only the hash is stored/emitted
-- `*Address exposure**: All events with funder/participant addresses are public; private claims remain identified only by on-chain activity
-
-### Defensive Events
-
-- ``**CancellationRefused**: Emitted when `cancel_claim` detects counterparty exposure or insolvency; nothing is changed on-chain, event is the audit trail
-- ``**Conservation assertions**: Lifecycle events follow accounting conservation checks; if emitted, conservation holds
-
-## Testing
-
-See contract test files:
-- `mimir-market/src/test_lifecycle.rs`: State transition coverage
-- `mimir-market/src/test_settlement.rs`: Resolution and payout event verification
-- `mimir-squad/src/test_lifecycle.rs`: Pool market lifecycle
-- `mimir-squad/src/test_payouts.rs`: Pool payout event ordering
-- `mimir-squad/src/test_fee_recipient_rotation.rs`: Fee recipient rotation queue/cancel/execute/unauthorised paths and `claim_fees` after rotation
-
-Event assertions confirm:
-- Correct state transition sequences
-- Event field values match committed state
-- Event ordering within transactions
-- Conservation invariants after each lifecycle step
+4. Across transactions, events for the same claim are totally ordered by `revision`; a rejected invocation emits no mutation event and does not advance `revision`.

@@ -33,6 +33,8 @@ fn creating_a_claim_escrows_the_stake_and_defaults_the_config() {
     // Settlement accounting starts empty and is seeded by resolve_claim.
     assert_eq!(claim.remaining_escrow, 0);
     assert_eq!(claim.challenger_claims, 0);
+    // Each successful mutation returns an explicit claim revision; creation starts at 1.
+    assert_eq!(claim.revision, 1);
 
     let config = f.client().get_claim_market_config(&id);
     assert_eq!(config.max_challengers, MAX_CHALLENGERS);
