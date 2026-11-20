@@ -18,7 +18,14 @@
  *    dropping a field is how a caller believes it set a cap that never applied.
  *  - **Every response carries its version**, so a cached body can be identified
  *    later rather than guessed at from its keys.
+ *
+ * Pagination cursors are bound to the normalized query they were issued for
+ * (see `bindCursor` / `verifyCursor`): a cursor minted under one sort or filter
+ * selection is refused under any other, so a client cannot silently splice pages
+ * from two different result sets together.
  */
+
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const API_SCHEMA_VERSION = 1;
 
@@ -68,6 +75,116 @@ export function resolveRequestVersion(
     };
   }
   return { ok: true, version };
+}
+
+// ── Pagination cursors ────────────────────────────────────────────────────────
+
+/**
+ * Query parameters that determine which records a cursor walks through and in
+ * what order. Anything that changes the result set or its ordering belongs here.
+ */
+export interface CursorQuery {
+  sort?: string;
+  order?: "asc" | "desc";
+  filters?: Record<string, string | number | boolean | null | undefined>;
+}
+
+/**
+ * Canonical string form of a query: keys sorted, empty/undefined filters dropped,
+ * values stringified. Two requests that mean the same selection normalize to the
+ * same string regardless of parameter order or casing of the sort direction.
+ */
+export function normalizeCursorQuery(query: CursorQuery): string {
+  const filters: Record<string, string> = {};
+  for (const key of Object.keys(query.filters ?? {}).sort()) {
+    const value = query.filters![key];
+    if (value === undefined || value === null || value === "") continue;
+    filters[key] = String(value);
+  }
+  return JSON.stringify({
+    sort: query.sort ?? "",
+    order: (query.order ?? "asc").toLowerCase(),
+    filters,
+  });
+}
+
+/** Payload carried inside a cursor. `b` binds it to a normalized query. */
+export interface CursorPayload {
+  /** Position: the last sort key and record id seen on the previous page. */
+  k: string | number;
+  i: string;
+  /** Query binding: a digest of the normalized query the cursor was issued for. */
+  b: string;
+}
+
+export type CursorVerdict =
+  | { ok: true; payload: CursorPayload }
+  | { ok: false; reason: "malformed_cursor" | "cursor_query_mismatch" };
+
+function queryDigest(query: CursorQuery, secret: string): string {
+  return createHmac("sha256", secret).update(normalizeCursorQuery(query)).digest("base64url").slice(0, 22);
+}
+
+/**
+ * Mint an opaque cursor for the next page, bound to the query it was issued for.
+ * `secret` is the server-side key; clients never learn the digest's preimage.
+ */
+export function bindCursor(
+  position: { key: string | number; id: string },
+  query: CursorQuery,
+  secret: string,
+): string {
+  const payload: CursorPayload = { k: position.key, i: position.id, b: queryDigest(query, secret) };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+/**
+ * Decode a cursor and check it was issued for `query`. A cursor minted under a
+ * different sort or filter selection is refused rather than applied, since its
+ * position is meaningless against the new result set.
+ */
+export function verifyCursor(cursor: string, query: CursorQuery, secret: string): CursorVerdict {
+  let payload: CursorPayload;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as CursorPayload).b !== "string" ||
+      typeof (parsed as CursorPayload).i !== "string" ||
+      (typeof (parsed as CursorPayload).k !== "string" && typeof (parsed as CursorPayload).k !== "number")
+    ) {
+      return { ok: false, reason: "malformed_cursor" };
+    }
+    payload = parsed as CursorPayload;
+  } catch {
+    return { ok: false, reason: "malformed_cursor" };
+  }
+
+  const expected = Buffer.from(queryDigest(query, secret));
+  const actual = Buffer.from(payload.b);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return { ok: false, reason: "cursor_query_mismatch" };
+  }
+  return { ok: true, payload };
+}
+
+/**
+ * Deterministic ordering comparator for equal-ranked records: sort key first,
+ * then record id as a stable tiebreak. Pages never skip or repeat records that
+ * share a sort key, because the position is (key, id), not key alone.
+ */
+export function compareWithTiebreak(
+  a: { key: string | number; id: string },
+  b: { key: string | number; id: string },
+  order: "asc" | "desc" = "asc",
+): number {
+  const sign = order === "desc" ? -1 : 1;
+  if (a.key < b.key) return -1 * sign;
+  if (a.key > b.key) return 1 * sign;
+  if (a.id < b.id) return -1;
+  if (a.id > b.id) return 1;
+  return 0;
 }
 
 // ── Minimal shape checking ────────────────────────────────────────────────────

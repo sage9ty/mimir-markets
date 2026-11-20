@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api/errors";
 import { CATEGORIES } from "@/lib/constants";
 import { getVsFeedSnapshot, type VsFeedOptions, type VsSort } from "@/lib/server/vs-index";
 import { VS_CACHE_HEADERS } from "@/lib/server/vs-cache";
+import { decodeCursor, encodeCursor, type CursorFilters } from "@/lib/api/cursor";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,15 @@ export async function GET(request: Request) {
       return NextResponse.json(parsed.body, { status: parsed.status, headers: parsed.headers });
     }
     const { forceRefresh, cursor, limit, category, states, creator, sort } = parsed.params;
+
+    // Bind the cursor to the normalized filter selection: a cursor issued for one
+    // sort or filter set cannot be replayed against another.
+    const filters: CursorFilters = { category, states, creator, sort };
+    const decoded = decodeCursor(cursor, filters);
+    if (decoded.kind === "error") {
+      return NextResponse.json(decoded.error.body, { status: decoded.error.status, headers: decoded.error.headers });
+    }
+
     const { items, cache, nextCursor } = await getVsFeedSnapshot({
       forceRefresh,
       cursor,
@@ -67,12 +77,23 @@ export async function GET(request: Request) {
       });
     }
 
+    const boundNextCursor =
+      nextCursor && items.length > 0
+        ? encodeCursor(
+            {
+              key: (items[items.length - 1] as { id: number }).id,
+              id: (items[items.length - 1] as { id: number }).id,
+            },
+            filters,
+          )
+        : nextCursor;
+
     return NextResponse.json(
       {
         items,
         count: items.length,
         cache,
-        nextCursor,
+        nextCursor: boundNextCursor,
       },
       {
         headers: { ...VS_CACHE_HEADERS, ETag: etag },
