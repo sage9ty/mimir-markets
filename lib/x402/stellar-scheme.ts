@@ -219,6 +219,8 @@ export type StellarVerifyFailure =
   | "already_settled"
   | "horizon_unavailable";
 
+export const RETRYABLE_VERIFY_FAILURES: ReadonlySet<StellarVerifyFailure> = new Set(["horizon_unavailable"]);
+
 export type StellarVerifyResult =
   | {
       ok: true;
@@ -647,7 +649,12 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
       backend: this.backend,
     });
     if (!result.ok) {
-      return { isValid: false, invalidReason: result.reason, invalidMessage: result.message };
+      return {
+        isValid: false,
+        invalidReason: result.reason,
+        invalidMessage: result.message,
+        extra: { retryable: RETRYABLE_VERIFY_FAILURES.has(result.reason) },
+      };
     }
     if (await isSettlementConsumed(requirements.network, result.transaction)) {
       return {
