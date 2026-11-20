@@ -59,3 +59,10 @@ pub fn try_push(env: &Env, usdc: &Address, to: &Address, amount: i128) -> bool {
 pub fn balance(env: &Env, usdc: &Address) -> i128 {
     token::TokenClient::new(env, usdc).balance(&env.current_contract_address())
 }
+
+/// Read-only escrow view for settlement readiness: returns the escrow balance
+/// without any state mutation, so callers can report withdrawal availability
+/// independently of resolution.
+pub fn readable_balance(env: &Env, usdc: &Address) -> i128 {
+    balance(env, usdc)
+}
