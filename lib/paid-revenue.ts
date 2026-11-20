@@ -15,6 +15,7 @@ import {
   type PaymentsRevenueSummary,
 } from "./db";
 import { USDC_DECIMALS, USDC_SYMBOL, unitsToUsdc } from "./usdc";
+import type { VerificationTrace } from "./x402/decision-trace";
 
 export interface PaymentEvent {
   /** Which endpoint earned it (e.g. /api/premium/price). */
@@ -36,6 +37,11 @@ export interface PaymentEvent {
   paymentIdentifier: string;
   facilitator: string;
   settledAt: number;
+  /**
+   * Optional privacy-safe verification decision trace. Never persisted to the
+   * durable store; only surfaced on the in-memory view.
+   */
+  verificationTrace?: VerificationTrace;
 }
 
 const MAX = 1000;
@@ -89,6 +95,8 @@ export interface RevenuePaymentView {
   seller: string | null;
   transactionHash: string | null;
   at: number;
+  /** Privacy-safe verification decision, present only for in-memory events. */
+  verification?: VerificationTrace;
 }
 
 export interface RevenueSummary {
@@ -179,10 +187,10 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
   const bySeller = new Map<string, { calls: number; atomic: bigint }>();
   const payers = new Set<string>();
   const sellers = new Set<string>();
-  let totalAlomic = 0n;
+  let totalAtomic = 0n;
   for (const e of events) {
     totalAtomic += e.amountAtomic;
-    // Grouped on the exact strker. Folding case here did not merely mis-key the
+    // Grouped on the exact string. Folding case here did not merely mis-key the
     // map: `bySeller` is keyed by this value and the key is what /revenue renders,
     // so a lowercased `G…` was surfaced to the UI as the seller's address.
     if (e.payer) payers.add(e.payer);
@@ -225,6 +233,7 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
         seller: e.seller,
         transactionHash: e.transactionHash,
         at: e.settledAt,
+        ...(e.verificationTrace ? { verification: e.verificationTrace } : {}),
       })),
     market: EMPTY_MARKET,
   };

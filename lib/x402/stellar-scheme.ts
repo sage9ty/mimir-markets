@@ -2,6 +2,7 @@
  * Mimir's Stellar-native x402 payment scheme — `exact` on `stellar:testnet`.
  *
  * This module is the whole mechanism: the buyer half, the seller half, and the
+ * ... 
  * local stand-in for what used to be an HTTP facilitator. It implements the real
  * `@x402/core` v2.21 interfaces (`SchemeNetworkClient`, `SchemeNetworkServer`,
  * `SchemeNetworkFacilitator`, `FacilitatorClient`) — nothing here is a shim
@@ -424,6 +425,8 @@ export async function verifyStellarPayment(
 
   return { ok: true, transaction: proof.transaction, payer: proof.payer, amountAtomic: paid, settledAt: createdAt };
 }
+
+// ── Decision trace (privacy-safe) ─────────────────────────────────────────────
 
 /** Ed25519 check. Fails closed on anything malformed, like `lib/stellar-message.ts`. */
 function verifyProofSignature(proof: StellarPaymentProof, message: string): boolean {
