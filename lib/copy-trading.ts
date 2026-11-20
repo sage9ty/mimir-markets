@@ -548,3 +548,461 @@ export function explainCopySkipReason(reason: CopySkipReason): string {
       return "Unknown skip reason.";
   }
 }
+// ── Copy execution recovery (#885) ──────────────────────────────────────────
+//
+// After a submission whose result is unknown (timeout, crash, dropped
+// connection), the executor must not resubmit the same stake. Instead it
+// records a durable intent, reconciles it against on-chain position identity,
+// and holds it until the outcome is known. A `pending` or `unknown` intent for
+// the same `(policyId, member, stakeAtomic)` blocks a new submission; the same
+// intent's stake counts toward the caller's `spentThisPeriodAtomic` exactly
+// once, before and after it reconciles.
+
+/** Lifecycle of a copy execution intent. */
+export type CopyExecutionIntentStatus = "pending" | "confirmed" | "unknown";
+
+/**
+ * A durable record of a copy stake the executor has decided to submit.
+ *
+ * Written **before** the submission so a crash or timeout leaves a recoverable
+ * record rather than a lost one. `idempotencyKey` is the executor's stable key
+ * for "this stake of this policy for this member"; `stakeAtomic` is 7-decimal
+ * USDC, matching every other atomic figure in this module.
+ */
+export interface CopyExecutionIntent {
+  id: string;
+  policyId: string;
+  member: string;
+  /** 7-decimal atomic USDC. */
+  stakeAtomic: bigint;
+  idempotencyKey: string;
+  status: CopyExecutionIntentStatus;
+  /** Populated once the executor sees a transaction hash. */
+  txHash?: string;
+  /** Populated once a chain position is matched. */
+  positionId?: string;
+  /** Epoch ms when the intent was first persisted. */
+  createdAt: number;
+  /** Epoch ms of the submission attempt (when one was made). */
+  submittedAt?: number;
+  /** Epoch ms when the intent became `confirmed` or was held past the window. */
+  resolvedAt?: number;
+  /** Last error observed during submission, bounded upstream by `safeErrorMessage`. */
+  lastError?: string;
+}
+
+/** One on-chain position as the reconciler sees it. */
+export interface CopyChainPosition {
+  txHash: string;
+  positionId: string;
+  /** 7-decimal atomic USDC actually staked. */
+  stakeAtomic: bigint;
+}
+
+/** Outcome of reconciling one batch of intents against one batch of positions. */
+export interface CopyIntentReconcileResult {
+  /** Intents whose on-chain position matched; already marked `confirmed`. */
+  confirmed: CopyExecutionIntent[];
+  /** Intents still inside the reconcile window with no match yet. */
+  stillUnknown: CopyExecutionIntent[];
+  /** Intents past the window with no match; held forever, never resubmitted. */
+  held: CopyExecutionIntent[];
+}
+
+/** Default reconcile window before an unmatched intent is held. */
+export const COPY_INTENT_RECONCILE_WINDOW_MS = 15 * 60 * 1000;
+
+function indexByTxHash(positions: readonly CopyChainPosition[]): Map<string, CopyChainPosition> {
+  const byTx = new Map<string, CopyChainPosition>();
+  for (const p of positions) {
+    if (!p || typeof p.txHash !== "string" || !p.txHash) continue;
+    if (typeof p.positionId !== "string" || !p.positionId) continue;
+    if (typeof p.stakeAtomic !== "bigint" || p.stakeAtomic <= 0n) continue;
+    byTx.set(p.txHash, p);
+  }
+  return byTx;
+}
+
+/**
+ * Reconcile `unknown` intents against on-chain positions.
+ *
+ * - A match on `txHash` (or an already-recorded `positionId`) marks the intent
+ *   `confirmed` and copies the position id + stake onto it.
+ * - No match, inside the window: returned as `stillUnknown` (status unchanged)
+ *   so a later pass can reconcile again.
+ * - No match, past the window: returned as `held` (status stays `unknown`) so
+ *   the caller can surface the record without ever resubmitting.
+ *
+ * `pending` and `confirmed` intents are not returned; this is a no-op for them.
+ */
+export function reconcileUnknownIntents(
+  intents: readonly CopyExecutionIntent[],
+  chainPositions: readonly CopyChainPosition[],
+  now: number,
+  windowMs: number = COPY_INTENT_RECONCILE_WINDOW_MS,
+): CopyIntentReconcileResult {
+  const byTx = indexByTxHash(chainPositions);
+  const confirmed: CopyExecutionIntent[] = [];
+  const stillUnknown: CopyExecutionIntent[] = [];
+  const held: CopyExecutionIntent[] = [];
+  const window = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : COPY_INTENT_RECONCILE_WINDOW_MS;
+
+  for (const intent of intents) {
+    if (!intent || intent.status !== "unknown") continue;
+    const match = intent.txHash ? byTx.get(intent.txHash) : undefined;
+    if (match) {
+      confirmed.push({
+        ...intent,
+        status: "confirmed",
+        positionId: match.positionId,
+        stakeAtomic: match.stakeAtomic,
+        resolvedAt: now,
+      });
+      continue;
+    }
+    const submitted = typeof intent.submittedAt === "number" ? intent.submittedAt : intent.createdAt;
+    const past = now - submitted >= window;
+    if (past) {
+      held.push({ ...intent, resolvedAt: now });
+    } else {
+      stillUnknown.push(intent);
+    }
+  }
+
+  return { confirmed, stillUnknown, held };
+}
+
+/** Result of checking whether a new submission should be allowed. */
+export type CopyResubmissionDecision =
+  | { allowed: true }
+  | { allowed: false; reason: "pending_intent" | "unknown_intent"; existing: CopyExecutionIntent };
+
+/**
+ * Decide whether a new submission for `(policyId, member, stakeAtomic)` may
+ * proceed. Any existing intent in `pending` or `unknown` state for that exact
+ * triple blocks the new submission — this is the "no automatic repeated stakes
+ * for an unknown result" rule.
+ *
+ * Matching is on `policyId`, `member` and `stakeAtomic`. A different stake, a
+ * different policy, or a different member is a different intent.
+ */
+export function gateResubmission(
+  candidate: Pick<CopyExecutionIntent, "policyId" | "member" | "stakeAtomic">,
+  existingIntents: readonly CopyExecutionIntent[],
+  _now: number,
+): CopyResubmissionDecision {
+  for (const intent of existingIntents) {
+    if (!intent) continue;
+    if (intent.status === "confirmed") continue;
+    if (intent.policyId !== candidate.policyId) continue;
+    if (intent.member !== candidate.member) continue;
+    if (intent.stakeAtomic !== candidate.stakeAtomic) continue;
+    if (intent.status === "pending") {
+      return { allowed: false, reason: "pending_intent", existing: intent };
+    }
+    if (intent.status === "unknown") {
+      return { allowed: false, reason: "unknown_intent", existing: intent };
+    }
+  }
+  return { allowed: true };
+}
+
+/**
+ * Sum of stakes across `pending` and `unknown` intents — the amount the caller
+ * must add to `spentThisPeriodAtomic` before calling `evaluateSpend`, so a held
+ * intent is counted exactly once while it is in flight, and not again after it
+ * confirms (the caller drops it from the reserved set on `confirmed`).
+ */
+export function reservedSpendAtomic(intents: readonly CopyExecutionIntent[]): bigint {
+  let total = 0n;
+  for (const intent of intents) {
+    if (!intent || typeof intent.stakeAtomic !== "bigint" || intent.stakeAtomic <= 0n) continue;
+    if (intent.status === "pending" || intent.status === "unknown") total += intent.stakeAtomic;
+  }
+  return total;
+}
+
+// ── Copy execution recovery (#885) ──────────────────────────────────────────
+//
+// After a submission whose result is unknown (timeout, crash, dropped
+// connection), the executor must not resubmit the same stake. Instead it
+// records a durable intent, reconciles it against on-chain position identity,
+// and holds it until the outcome is known. A `pending` or `unknown` intent for
+// the same `(policyId, member, stakeAtomic)` blocks a new submission; the same
+// intent's stake counts toward the caller's `spentThisPeriodAtomic` exactly
+// once, before and after it reconciles.
+
+/** Lifecycle of a copy execution intent. */
+export type CopyExecutionIntentStatus = "pending" | "confirmed" | "unknown";
+
+/**
+ * A durable record of a copy stake the executor has decided to submit.
+ *
+ * Written **before** the submission so a crash or timeout leaves a recoverable
+ * record rather than a lost one. `idempotencyKey` is the executor's stable key
+ * for "this stake of this policy for this member"; `stakeAtomic` is 7-decimal
+ * USDC, matching every other atomic figure in this module.
+ */
+export interface CopyExecutionIntent {
+  id: string;
+  policyId: string;
+  member: string;
+  /** 7-decimal atomic USDC. */
+  stakeAtomic: bigint;
+  idempotencyKey: string;
+  status: CopyExecutionIntentStatus;
+  /** Populated once the executor sees a transaction hash. */
+  txHash?: string;
+  /** Populated once a chain position is matched. */
+  positionId?: string;
+  /** Epoch ms when the intent was first persisted. */
+  createdAt: number;
+  /** Epoch ms of the submission attempt (when one was made). */
+  submittedAt?: number;
+  /** Epoch ms when the intent became `confirmed` or was held past the window. */
+  resolvedAt?: number;
+  /** Last error observed during submission, bounded upstream by `safeErrorMessage`. */
+  lastError?: string;
+}
+
+/** One on-chain position as the reconciler sees it. */
+export interface CopyChainPosition {
+  txHash: string;
+  positionId: string;
+  /** 7-decimal atomic USDC actually staked. */
+  stakeAtomic: bigint;
+}
+
+/** Outcome of reconciling one batch of intents against one batch of positions. */
+export interface CopyIntentReconcileResult {
+  /** Intents whose on-chain position matched; already marked `confirmed`. */
+  confirmed: CopyExecutionIntent[];
+  /** Intents still inside the reconcile window with no match yet. */
+  stillUnknown: CopyExecutionIntent[];
+  /** Intents past the window with no match; held forever, never resubmitted. */
+  held: CopyExecutionIntent[];
+}
+
+/** Default reconcile window before an unmatched intent is held. */
+export const COPY_INTENT_RECONCILE_WINDOW_MS = 15 * 60 * 1000;
+
+function indexByTxHash(positions: readonly CopyChainPosition[]): Map<string, CopyChainPosition> {
+  const byTx = new Map<string, CopyChainPosition>();
+  for (const p of positions) {
+    if (!p || typeof p.txHash !== "string" || !p.txHash) continue;
+    if (typeof p.positionId !== "string" || !p.positionId) continue;
+    if (typeof p.stakeAtomic !== "bigint" || p.stakeAtomic <= 0n) continue;
+    byTx.set(p.txHash, p);
+  }
+  return byTx;
+}
+
+/**
+ * Reconcile `unknown` intents against on-chain positions.
+ *
+ * - A match on `txHash` (or an already-recorded `positionId`) marks the intent
+ *   `confirmed` and copies the position id + stake onto it.
+ * - No match, inside the window: returned as `stillUnknown` (status unchanged)
+ *   so a later pass can reconcile again.
+ * - No match, past the window: returned as `held` (status stays `unknown`) so
+ *   the caller can surface the record without ever resubmitting.
+ *
+ * `pending` and `confirmed` intents are not returned; this is a no-op for them.
+ */
+export function reconcileUnknownIntents(
+  intents: readonly CopyExecutionIntent[],
+  chainPositions: readonly CopyChainPosition[],
+  now: number,
+  windowMs: number = COPY_INTENT_RECONCILE_WINDOW_MS,
+): CopyIntentReconcileResult {
+  const byTx = indexByTxHash(chainPositions);
+  const confirmed: CopyExecutionIntent[] = [];
+  const stillUnknown: CopyExecutionIntent[] = [];
+  const held: CopyExecutionIntent[] = [];
+  const window = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : COPY_INTENT_RECONCILE_WINDOW_MS;
+
+  for (const intent of intents) {
+    if (!intent || intent.status !== "unknown") continue;
+    const match = intent.txHash ? byTx.get(intent.txHash) : undefined;
+    if (match) {
+      confirmed.push({
+        ...intent,
+        status: "confirmed",
+        positionId: match.positionId,
+        stakeAtomic: match.stakeAtomic,
+        resolvedAt: now,
+      });
+      continue;
+    }
+    const submitted = typeof intent.submittedAt === "number" ? intent.submittedAt : intent.createdAt;
+    const past = now - submitted >= window;
+    if (past) {
+      held.push({ ...intent, resolvedAt: now });
+    } else {
+      stillUnknown.push(intent);
+    }
+  }
+
+  return { confirmed, stillUnknown, held };
+}
+
+/** Result of checking whether a new submission should be allowed. */
+export type CopyResubmissionDecision =
+  | { allowed: true }
+  | { allowed: false; reason: "pending_intent" | "unknown_intent"; existing: CopyExecutionIntent };
+
+/**
+ * Decide whether a new submission for `(policyId, member, stakeAtomic)` may
+ * proceed. Any existing intent in `pending` or `unknown` state for that exact
+ * triple blocks the new submission — this is the "no automatic repeated stakes
+ * for an unknown result" rule.
+ *
+ * Matching is on `policyId`, `member` and `stakeAtomic`. A different stake, a
+ * different policy, or a different member is a different intent.
+ */
+export function gateResubmission(
+  candidate: Pick<CopyExecutionIntent, "policyId" | "member" | "stakeAtomic">,
+  existingIntents: readonly CopyExecutionIntent[],
+  _now: number,
+): CopyResubmissionDecision {
+  for (const intent of existingIntents) {
+    if (!intent) continue;
+    if (intent.status === "confirmed") continue;
+    if (intent.policyId !== candidate.policyId) continue;
+    if (intent.member !== candidate.member) continue;
+    if (intent.stakeAtomic !== candidate.stakeAtomic) continue;
+    if (intent.status === "pending") {
+      return { allowed: false, reason: "pending_intent", existing: intent };
+    }
+    if (intent.status === "unknown") {
+      return { allowed: false, reason: "unknown_intent", existing: intent };
+    }
+  }
+  return { allowed: true };
+}
+
+/**
+ * Sum of stakes across `pending` and `unknown` intents — the amount the caller
+ * must add to `spentThisPeriodAtomic` before calling `evaluateSpend`, so a held
+ * intent is counted exactly once while it is in flight, and not again after it
+ * confirms (the caller drops it from the reserved set on `confirmed`).
+ */
+export function reservedSpendAtomic(intents: readonly CopyExecutionIntent[]): bigint {
+  let total = 0n;
+  for (const intent of intents) {
+    if (!intent || typeof intent.stakeAtomic !== "bigint" || intent.stakeAtomic <= 0n) continue;
+    if (intent.status === "pending" || intent.status === "unknown") total += intent.stakeAtomic;
+  }
+  return total;
+}
+
+// ── Copy execution recovery (#885) ──────────────────────────────────────────
+//
+// After a submission whose result is unknown (timeout, crash, dropped
+// connection), the executor must not resubmit the same stake. Instead it
+// records a durable intent, reconciles it against on-chain position identity,
+// and holds it until the outcome is known. A `pending` or `unknown` intent for
+// the same `(policyId, member, stakeAtomic)` blocks a new submission; the same
+// intent's stake counts toward the caller's `spentThisPeriodAtomic` exactly
+// once, before and after it reconciles.
+
+/** Lifecycle of a copy execution intent. */
+export type CopyExecutionIntentStatus = "pending" | "confirmed" | "unknown";
+
+/** A durable record of a copy stake the executor has decided to submit. */
+export interface CopyExecutionIntent {
+  id: string;
+  policyId: string;
+  member: string;
+  /** 7-decimal atomic USDC. */
+  stakeAtomic: bigint;
+  idempotencyKey: string;
+  status: CopyExecutionIntentStatus;
+  txHash?: string;
+  positionId?: string;
+  createdAt: number;
+  submittedAt?: number;
+  resolvedAt?: number;
+  lastError?: string;
+}
+
+/** One on-chain position as the reconciler sees it. */
+export interface CopyChainPosition {
+  txHash: string;
+  positionId: string;
+  stakeAtomic: bigint;
+}
+
+export interface CopyIntentReconcileResult {
+  confirmed: CopyExecutionIntent[];
+  stillUnknown: CopyExecutionIntent[];
+  held: CopyExecutionIntent[];
+}
+
+export const COPY_INTENT_RECONCILE_WINDOW_MS = 15 * 60 * 1000;
+
+function indexByTxHash(positions: readonly CopyChainPosition[]): Map<string, CopyChainPosition> {
+  const byTx = new Map<string, CopyChainPosition>();
+  for (const p of positions) {
+    if (!p || typeof p.txHash !== "string" || !p.txHash) continue;
+    if (typeof p.positionId !== "string" || !p.positionId) continue;
+    if (typeof p.stakeAtomic !== "bigint" || p.stakeAtomic <= 0n) continue;
+    byTx.set(p.txHash, p);
+  }
+  return byTx;
+}
+
+export function reconcileUnknownIntents(
+  intents: readonly CopyExecutionIntent[],
+  chainPositions: readonly CopyChainPosition[],
+  now: number,
+  windowMs: number = COPY_INTENT_RECONCILE_WINDOW_MS,
+): CopyIntentReconcileResult {
+  const byTx = indexByTxHash(chainPositions);
+  const confirmed: CopyExecutionIntent[] = [];
+  const stillUnknown: CopyExecutionIntent[] = [];
+  const held: CopyExecutionIntent[] = [];
+  const window = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : COPY_INTENT_RECONCILE_WINDOW_MS;
+
+  for (const intent of intents) {
+    if (!intent || intent.status !== "unknown") continue;
+    const match = intent.txHash ? byTx.get(intent.txHash) : undefined;
+    if (match) {
+      confirmed.push({ ...intent, status: "confirmed", positionId: match.positionId, stakeAtomic: match.stakeAtomic, resolvedAt: now });
+      continue;
+    }
+    const submitted = typeof intent.submittedAt === "number" ? intent.submittedAt : intent.createdAt;
+    if (now - submitted >= window) held.push({ ...intent, resolvedAt: now });
+    else stillUnknown.push(intent);
+  }
+  return { confirmed, stillUnknown, held };
+}
+
+export type CopyResubmissionDecision =
+  | { allowed: true }
+  | { allowed: false; reason: "pending_intent" | "unknown_intent"; existing: CopyExecutionIntent };
+
+export function gateResubmission(
+  candidate: Pick<CopyExecutionIntent, "policyId" | "member" | "stakeAtomic">,
+  existingIntents: readonly CopyExecutionIntent[],
+  _now: number,
+): CopyResubmissionDecision {
+  for (const intent of existingIntents) {
+    if (!intent || intent.status === "confirmed") continue;
+    if (intent.policyId !== candidate.policyId) continue;
+    if (intent.member !== candidate.member) continue;
+    if (intent.stakeAtomic !== candidate.stakeAtomic) continue;
+    if (intent.status === "pending") return { allowed: false, reason: "pending_intent", existing: intent };
+    if (intent.status === "unknown") return { allowed: false, reason: "unknown_intent", existing: intent };
+  }
+  return { allowed: true };
+}
+
+export function reservedSpendAtomic(intents: readonly CopyExecutionIntent[]): bigint {
+  let total = 0n;
+  for (const intent of intents) {
+    if (!intent || typeof intent.stakeAtomic !== "bigint" || intent.stakeAtomic <= 0n) continue;
+    if (intent.status === "pending" || intent.status === "unknown") total += intent.stakeAtomic;
+  }
+  return total;
+}
