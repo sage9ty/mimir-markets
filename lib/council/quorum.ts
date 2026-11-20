@@ -149,6 +149,63 @@ const EMPTY_DISPOSITIONS = (): Record<VoteDisposition, number> => ({
   dependency_failure: 0,
 });
 
+/**
+ * Compare quorum/confidence policy outcomes across identical fixtures without
+ * contacting model providers. Each fixture is a list of raw vote attempts plus
+ * a quorum config; the result reports the evaluation under a baseline policy and
+ * a candidate policy, and flags any decisions that changed.
+ */
+export interface PolicyFixture {
+  name: string;
+  attempts: ClassifiedVote[];
+  quorum: unknown;
+  claimState?: ClaimSettleState;
+}
+
+export interface PolicyComparisonRow {
+  name: string;
+  baseline: FallbackAction;
+  candidate: FallbackAction;
+  changed: boolean;
+  baselineReason: string;
+  candidateReason: string;
+}
+
+export interface PolicyComparisonReport {
+  rows: PolicyComparisonRow[];
+  changedCount: number;
+}
+
+/**
+ * Run two quorum policies over the same fixtures and report changed decisions.
+ * Pure: no network, no provider calls, no persisted state.
+ */
+export function comparePolicies(
+  fixtures: PolicyFixture[],
+  baselineOpts: { quorum?: unknown; strictConfig?: boolean } = {},
+  candidateOpts: { quorum?: unknown; strictConfig?: boolean } = {},
+): PolicyComparisonReport {
+  const rows: PolicyComparisonRow[] = fixtures.map((fx) => {
+    const base = evaluateQuorum(fx.attempts, baselineOpts.quorum ?? fx.quorum, {
+      claimState: fx.claimState,
+      strictConfig: baselineOpts.strictConfig,
+    });
+    const cand = evaluateQuorum(fx.attempts, candidateOpts.quorum ?? fx.quorum, {
+      claimState: fx.claimState,
+      strictConfig: candidateOpts.strictConfig,
+    });
+    return {
+      name: fx.name,
+      baseline: base.action,
+      candidate: cand.action,
+      changed: base.action !== cand.action,
+      baselineReason: base.reason,
+      candidateReason: cand.reason,
+    };
+  });
+  return { rows, changedCount: rows.filter((r) => r.changed).length };
+}
+
 export function isDecisiveVerdict(verdict: Verdict): boolean {
   return verdict === "CREATOR_WINS" || verdict === "CHALLENGERS_WINS";
 }

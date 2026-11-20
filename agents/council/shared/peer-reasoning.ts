@@ -53,6 +53,54 @@ function payingWalletForPersona(persona: PersonaSpec): PayingWallet | null {
   }
 }
 
+/**
+ * Replays a council policy over captured ballots without contacting any model
+ * provider. Each fixture pairs a claim with the independent opinions gathered
+ * earlier, so quorum and confidence rules can be compared on identical inputs.
+ */
+export interface CapturedBallot {
+  persona: string;
+  verdict: "yes" | "no" | "abstain";
+  confidence: number;
+}
+
+export interface CouncilPolicy {
+  name: string;
+  quorum: number;
+  minConfidence: number;
+}
+
+export interface PolicyDecision {
+  policy: string;
+  decision: "yes" | "no" | "undecided";
+}
+
+export function runPolicyComparison(
+  ballots: CapturedBallot[],
+  policies: CouncilPolicy[],
+): PolicyDecision[] {
+  return policies.map((policy) => {
+    const counted = ballots.filter(
+      (b) => b.verdict !== "abstain" && b.confidence >= policy.minConfidence,
+    );
+    if (counted.length < policy.quorum) {
+      return { policy: policy.name, decision: "undecided" as const };
+    }
+    const yes = counted.filter((b) => b.verdict === "yes").length;
+    const no = counted.length - yes;
+    if (yes === no) return { policy: policy.name, decision: "undecided" as const };
+    return { policy: policy.name, decision: yes > no ? ("yes" as const) : ("no" as const) };
+  });
+}
+
+export function changedDecisions(
+  baseline: PolicyDecision[],
+  candidate: PolicyDecision[],
+): PolicyDecision[] {
+  const byName = new Map(baseline.map((d) => [d.policy, d.decision]));
+  return candidate.filter((d) => byName.get(d.policy) !== d.decision);
+}
+
 export function selectPeerSellers(
   buyer: PersonaSpec,
   activePersonas: PersonaSpec[],

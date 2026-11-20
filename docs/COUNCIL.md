@@ -214,6 +214,16 @@ newer policy default.
 
 ---
 
+## Council policy comparison runner
+
+The policy comparison runner replays **captured council ballots** against two
+quorum/confidence policies and reports which settlement decisions would change.
+It evaluates both policies on identical fixtures, makes no model-provider calls,
+and writes results only to a temporary state directory.
+
+
+---
+
 ## Rate-limit strategy
 
 LLM providers can 429 if the council rushes a crowded market. The worker is intentionally calm by default: it focuses on one deadline-prioritized claim per cycle and spaces persona decisions apart.
