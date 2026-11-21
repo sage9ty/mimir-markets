@@ -162,6 +162,26 @@ impl MimirSquad {
         storage::accrued_fees(&env)
     }
 
+    /// Distinct claim status for a wallet on one side of a market.
+    ///
+    /// Returns `(claimable, already_claimed)` as separate fields so callers
+    /// never have to infer state from a zero amount. A wallet with no position
+    /// returns `(0, false)` through this read-only path without erroring.
+    pub fn get_claim_status(
+        env: Env,
+        market_id: u64,
+        side: u32,
+        who: Address,
+    ) -> Result<(i128, bool), Error> {
+        let already_claimed = storage::has_claimed(&env, market_id, side, &who);
+        let claimable = match pool::preview_claim(&env, market_id, side, &who) {
+            Ok(preview) => preview.amount,
+            Err(Error::NoPosition) => 0,
+            Err(e) => return Err(e),
+        };
+        Ok((claimable, already_claimed))
+    }
+
     /// Payout settled in the ledger but not delivered to one winner, because
     /// the token transfer trapped. `claim_parked_payout` moves it.
     pub fn parked_payout(env: Env, market_id: u64, side: u32, who: Address) -> i128 {

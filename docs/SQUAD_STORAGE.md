@@ -4,6 +4,17 @@
 
 This document describes where squad pool state lives in the Soroban ledger for `mimir-squad` (`contracts-soroban/mimir-squad/src/storage.rs`), how long it persists, the TTL (Time-To-Live) bumping policies across storage classes, and operational risks concerning state archival for unclaimed deposits and parked payouts.
 
+### Claim Status Reporting
+
+Claim-related views return explicit states rather than overloading zero:
+
+- **Claimable**: the participant has a non-zero deposit on the winning side of a resolved market and has not yet claimed.
+- **AlreadyClaimed**: the participant's `Claimed` flag is set; the amount paid out is reported separately from any claimable amount.
+- **NoPosition**: the wallet has no deposit on the market. This is a read-only path that never errors, so wallets with no position can be queried safely.
+- **Parked**: a payout was diverted to `DataKey::Payout` and awaits `claim_parked_payout`.
+
+All views are read-only and do not modify storage or extend TTL.
+
 ---
 
 ## Storage Architecture and Classes
@@ -50,7 +61,7 @@ Every storage key is represented by the `DataKey` enum (`contracts-soroban/mimir
 | `DataKey::AccruedFees` | Instance | `i128` | With instance | `accrued_fees` (storage.rs:97), `set_accrued_fees` (storage.rs:104), `claim` (contract.rs:75, pool.rs:247), `claim_fees` (contract.rs:79, pool.rs:296), `get_accrued_fees` view (contract.rs:122) |
 | `DataKey::Market(u64)` | Persistent | `Market` | **Yes (Read & Write)** | `get_market` (storage.rs:110), `set_market` (storage.rs:123), `create_market`, `deposit`, `withdraw_before_deadline`, `resolve`, `cancel_market`, `claim`, `get_market`, `preview_claim` |
 | `DataKey::Deposit(u64, u32, Address)` | Persistent | `i128` | **Write only (`set_deposit`)**; **NEVER on read** | `deposit_of` (storage.rs:133), `set_deposit` (storage.rs:140), `deposit` (pool.rs:22), `withdraw_before_deadline` (pool.rs:72), `claim` (pool.rs:160), `preview_claim` (pool.rs:312), `get_deposit` view (contract.rs:101) |
-| `DataKey::Claimed(u64, u32, Address)` | Persistent | `bool` | **Write only (`mark_claimed`)**; **NEVER on read** | `has_claimed` (storage.rs:152), `mark_claimed` (storage.rs:158), `claim` (pool.rs:160), `has_claimed` view (contract.rs:105) |
+| `DataKey::Claimed(u64, u32, Address)` | Persistent | `bool` | **Write only (`mark_claimed`)**; **NEVER on read** | `has_claimed` (storage.rs:152), `mark_claimed` (storage.rs:158), `claim` (pool.rs:160), `has_claimed` view (contract.rs:105). Distinct from claimable amount: a `true` flag yields the `AlreadyClaimed` state, while a missing deposit yields `NoPosition`. |
 | `DataKey::Payout(u64, u32, Address)` | Persistent | `i128` | **Write only (`set_payout`)**; **NEVER on read** | `payout_of` (storage.rs:170), `set_payout` (storage.rs:177), `claim` (pool.rs:232), `claim_parked_payout` (contract.rs:86, pool.rs:254), `parked_payout` view (contract.rs:128) |
 
 ---

@@ -90,6 +90,22 @@ pub struct ClaimResult {
     pub net: i128,
 }
 
+/// Explicit claim state for a wallet's position in a squad market.
+///
+/// Distinguishes the states that were previously collapsed into a zero amount:
+/// a wallet with no position, a wallet whose share is claimable right now, and
+/// a wallet whose payout has already been claimed.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClaimStatus {
+    /// The wallet has no position in the market (read-only path, no error).
+    NoPosition,
+    /// The wallet has a claimable payout of `net` atomic units.
+    Claimable(i128),
+    /// The wallet's payout has already been claimed.
+    AlreadyClaimed,
+}
+
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 #[contracterror]

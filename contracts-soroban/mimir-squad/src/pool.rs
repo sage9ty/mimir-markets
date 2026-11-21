@@ -654,6 +654,48 @@ pub fn preview_claim(
             net: 0,
         });
     }
+
+/// Explicit claim state for a wallet on one side, so callers never have to
+/// infer meaning from a zero amount.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimState {
+    /// Market not yet resolved; nothing is claimable yet.
+    NotResolved,
+    /// Wallet has no position on this side (read-only path, no error).
+    NoPosition,
+    /// Wallet lost (did not back the winning side).
+    Losing,
+    /// Wallet has a claimable amount, not yet pulled.
+    Claimable,
+    /// Wallet already pulled its payout.
+    AlreadyClaimed,
+}
+
+/// Distinguishes claimable from already-claimed without overloading zero.
+/// Read-only: never mutates state and never errors for a wallet with no position.
+pub fn preview_claim_state(
+    env: &Env,
+    market_id: u64,
+    side: u32,
+    participant: &Address,
+) -> Result<ClaimState, Error> {
+    let market = storage::get_market(env, market_id)?;
+    if !market.resolved {
+        return Ok(ClaimState::NotResolved);
+    }
+    let principal = storage::deposit_of(env, market_id, side, participant);
+    if principal <= 0 {
+        return Ok(ClaimState::NoPosition);
+    }
+    if market.result != RESULT_CANCELLED && side != market.result {
+        return Ok(ClaimState::Losing);
+    }
+    if storage::has_claimed(env, market_id, side, participant) {
+        return Ok(ClaimState::AlreadyClaimed);
+    }
+    Ok(ClaimState::Claimable)
+}
+
     if market.result != RESULT_CANCELLED && side != market.result {
         return Ok(ClaimResult {
             gross: 0,
