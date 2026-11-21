@@ -87,6 +87,38 @@ export const X402_PAYMENT_MAX_AGE_MS = (() => {
 })();
 
 /**
+ * Canonical version identifier for the x402 verification freshness policy.
+ */
+export const X402_FRESHNESS_POLICY_VERSION = "x402-freshness-v1";
+
+/**
+ * Versioned verification freshness policy shape applied during x402 proof checks.
+ */
+export interface X402FreshnessPolicy {
+  version: string;
+  maxAgeMs: number;
+}
+
+/**
+ * Resolved dynamically so configuration changes (e.g. via process.env)
+ * take effect without requiring module re-import.
+ */
+export function x402PaymentMaxAgeMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.X402_PAYMENT_MAX_AGE_MS ?? 0);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : X402_PAYMENT_MAX_AGE_MS;
+}
+
+/**
+ * Active verification freshness policy for current settlements.
+ */
+export function defaultFreshnessPolicy(maxAgeMs?: number): X402FreshnessPolicy {
+  return {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: maxAgeMs ?? x402PaymentMaxAgeMs(),
+  };
+}
+
+/**
  * Default seller — usually the oracle wallet. Persona routes override per-request.
  */
 export function sellerAddress(payTo?: string): string {

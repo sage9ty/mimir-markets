@@ -16,6 +16,21 @@ import {
 } from "./db";
 import { USDC_DECIMALS, USDC_SYMBOL, unitsToUsdc } from "./usdc";
 import type { VerificationTrace } from "./x402/decision-trace";
+import {
+  X402_FRESHNESS_POLICY_VERSION,
+  type X402FreshnessPolicy,
+  defaultFreshnessPolicy,
+  x402PaymentMaxAgeMs,
+} from "./x402/config";
+import { formatFreshnessExplanation } from "./x402/stellar-scheme";
+
+export {
+  X402_FRESHNESS_POLICY_VERSION,
+  type X402FreshnessPolicy,
+  defaultFreshnessPolicy,
+  x402PaymentMaxAgeMs,
+  formatFreshnessExplanation,
+};
 
 export interface PaymentEvent {
   /** Which endpoint earned it (e.g. /api/premium/price). */
@@ -42,6 +57,67 @@ export interface PaymentEvent {
    * durable store; only surfaced on the in-memory view.
    */
   verificationTrace?: VerificationTrace;
+  /** Applied verification freshness policy or version string */
+  policy?: X402FreshnessPolicy | string;
+  policyVersion?: string;
+  policyMaxAgeMs?: number;
+  /** Timestamp when payment freshness was observed on the ledger */
+  observedAt?: number;
+  observationTime?: number;
+  /** Human-readable explanation of freshness verification preserved for audit */
+  explanation?: string;
+}
+
+export type PaymentReceipt = PaymentEvent;
+
+/**
+ * Return human-readable explanation of freshness verification for a receipt.
+ * Preserves the historical explanation recorded at verification time even if system
+ * configuration (such as X402_PAYMENT_MAX_AGE_MS) changes afterwards.
+ */
+export function explainPaymentFreshness(receipt: {
+  settledAt?: number;
+  observedAt?: number;
+  observationTime?: number;
+  policy?: X402FreshnessPolicy | string;
+  policyVersion?: string;
+  policyMaxAgeMs?: number;
+  explanation?: string;
+}): string {
+  if (receipt.explanation) {
+    return receipt.explanation;
+  }
+  const policyObj =
+    typeof receipt.policy === "object" && receipt.policy !== null
+      ? receipt.policy
+      : defaultFreshnessPolicy(receipt.policyMaxAgeMs);
+  const version =
+    receipt.policyVersion ??
+    (typeof receipt.policy === "string" ? receipt.policy : policyObj.version);
+  const maxAgeMs = receipt.policyMaxAgeMs ?? policyObj.maxAgeMs;
+  const observedAt = receipt.observedAt ?? receipt.observationTime ?? Date.now();
+  const settledAt = receipt.settledAt ?? observedAt;
+  const ageMs = Math.max(0, observedAt - settledAt);
+  const ok = ageMs <= maxAgeMs;
+  return formatFreshnessExplanation({
+    ageMs,
+    maxAgeMs,
+    policyVersion: version,
+    ok,
+  });
+}
+
+/**
+ * Retrieve a stored payment receipt by paymentIdentifier or transactionHash.
+ */
+export function getStoredReceipt(identifierOrTxHash: string): PaymentEvent | null {
+  const target = identifierOrTxHash.trim().toLowerCase();
+  const found = events.find(
+    (e) =>
+      e.paymentIdentifier.toLowerCase() === target ||
+      (e.transactionHash && e.transactionHash.toLowerCase() === target),
+  );
+  return found ? { ...found } : null;
 }
 
 const MAX = 1000;
@@ -54,10 +130,41 @@ const events: PaymentEvent[] = [];
  * any fire-and-forget insert still in flight.
  */
 export function recordPayment(e: PaymentEvent): Promise<void> {
+  const observedAt = e.observedAt ?? e.observationTime ?? Date.now();
+  const policyObj: X402FreshnessPolicy =
+    typeof e.policy === "object" && e.policy !== null
+      ? e.policy
+      : defaultFreshnessPolicy(e.policyMaxAgeMs);
+  const policyVersion =
+    e.policyVersion ??
+    (typeof e.policy === "string" ? e.policy : policyObj.version);
+  const policyMaxAgeMs = e.policyMaxAgeMs ?? policyObj.maxAgeMs;
+  const normalizedPolicy: X402FreshnessPolicy = {
+    version: policyVersion,
+    maxAgeMs: policyMaxAgeMs,
+  };
+  const explanation =
+    e.explanation ??
+    explainPaymentFreshness({
+      settledAt: e.settledAt,
+      observedAt,
+      policy: normalizedPolicy,
+    });
+
+  const enrichedEvent: PaymentEvent = {
+    ...e,
+    observedAt,
+    observationTime: observedAt,
+    policy: normalizedPolicy,
+    policyVersion,
+    policyMaxAgeMs,
+    explanation,
+  };
+
   // In-memory mirror (instant, and the only store when no DB is configured).
   try {
-    if (!events.some((x) => x.paymentIdentifier === e.paymentIdentifier)) {
-      events.push(e);
+    if (!events.some((x) => x.paymentIdentifier === enrichedEvent.paymentIdentifier)) {
+      events.push(enrichedEvent);
       if (events.length > MAX) events.splice(0, events.length - MAX);
     }
   } catch {
@@ -66,19 +173,19 @@ export function recordPayment(e: PaymentEvent): Promise<void> {
   // Durable write — swallow errors (e.g. DB not configured) but log them. The
   // unique (network, payment_identifier) index makes a retry idempotent.
   return insertPayment({
-    resource: e.resource,
-    scheme: e.scheme,
-    network: e.network,
-    asset_address: e.assetAddress,
+    resource: enrichedEvent.resource,
+    scheme: enrichedEvent.scheme,
+    network: enrichedEvent.network,
+    asset_address: enrichedEvent.assetAddress,
     asset_symbol: USDC_SYMBOL,
     asset_decimals: USDC_DECIMALS,
-    amount_atomic: e.amountAtomic,
-    payer: e.payer,
-    seller: e.seller,
-    transaction_hash: e.transactionHash,
-    payment_identifier: e.paymentIdentifier,
-    facilitator: e.facilitator,
-    settled_at: e.settledAt,
+    amount_atomic: enrichedEvent.amountAtomic,
+    payer: enrichedEvent.payer,
+    seller: enrichedEvent.seller,
+    transaction_hash: enrichedEvent.transactionHash,
+    payment_identifier: enrichedEvent.paymentIdentifier,
+    facilitator: enrichedEvent.facilitator,
+    settled_at: enrichedEvent.settledAt,
     created_at: Date.now(),
   }).catch((err) => {
     console.warn("[payments] durable write failed:", err instanceof Error ? err.message : err);
@@ -101,6 +208,10 @@ export interface RevenuePaymentView {
   at: number;
   /** Privacy-safe verification decision, present only for in-memory events. */
   verification?: VerificationTrace;
+  policy?: X402FreshnessPolicy;
+  policyVersion?: string;
+  observedAt?: number;
+  explanation?: string;
 }
 
 export interface RevenueSummary {
@@ -381,6 +492,10 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
         transactionHash: e.transactionHash,
         at: e.settledAt,
         ...(e.verificationTrace ? { verification: e.verificationTrace } : {}),
+        ...(e.policy && typeof e.policy === "object" ? { policy: e.policy } : {}),
+        ...(e.policyVersion ? { policyVersion: e.policyVersion } : {}),
+        ...(e.observedAt ? { observedAt: e.observedAt } : {}),
+        ...(e.explanation ? { explanation: e.explanation } : {}),
       })),
     market: EMPTY_MARKET,
   };

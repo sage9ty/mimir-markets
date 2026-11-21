@@ -14,8 +14,16 @@ import test from "node:test";
 // Ensure no DATABASE_URL leaks in from the environment during tests.
 delete process.env.DATABASE_URL;
 
-import { recordPayment, getRevenueSummary, baselineCalls, baselineUsdc } from "../../lib/paid-revenue";
-import type { PaymentEvent } from "../../lib/paid-revenue";
+import {
+  recordPayment,
+  getRevenueSummary,
+  baselineCalls,
+  baselineUsdc,
+  getStoredReceipt,
+  explainPaymentFreshness,
+  X402_FRESHNESS_POLICY_VERSION,
+} from "../../lib/paid-revenue";
+import type { PaymentEvent, PaymentReceipt } from "../../lib/paid-revenue";
 
 const SELLER_A = "GBMGZBFKUNOS7JWPRPF5IMZR27DCR6BEP6SQVFV2I354UPY35FZTIR2Y";
 const SELLER_B = "GDZCBCIU6EI5FM5UC5IAWRT5ZY76OK4QDX5BEELC5V3NTNGAUIX5X4UH";
@@ -242,4 +250,114 @@ test("recordPayment swallows durable write errors and keeps the in-memory event"
     "summary must be accessible even when the durable write fails");
   assert.ok(summary.totalCalls <= 1000,
     "ring buffer must never exceed 1000 entries");
+});
+
+// ── Freshness policy versioning & receipt explanation ─────────────────────────
+
+test("stored receipt records applied policy, observation time, and explanation", async () => {
+  const id = uid();
+  const observedAt = 1_800_000_005_000;
+  const settledAt = 1_800_000_000_000;
+  const policy = { version: X402_FRESHNESS_POLICY_VERSION, maxAgeMs: 300_000 };
+
+  await recordPayment(makeEvent({
+    paymentIdentifier: id,
+    settledAt,
+    observedAt,
+    policy,
+  }));
+
+  const receipt = getStoredReceipt(id);
+  assert.ok(receipt, "stored receipt must be found by identifier");
+  assert.equal(receipt!.observedAt, observedAt, "receipt records observation time");
+  assert.equal(receipt!.observationTime, observedAt, "receipt records observationTime alias");
+  assert.deepEqual(receipt!.policy, policy, "receipt records applied policy");
+  assert.equal(receipt!.policyVersion, X402_FRESHNESS_POLICY_VERSION, "receipt records policyVersion");
+  assert.equal(receipt!.policyMaxAgeMs, 300_000, "receipt records policyMaxAgeMs");
+  assert.ok(receipt!.explanation, "receipt records explanation");
+  assert.ok(receipt!.explanation!.includes(X402_FRESHNESS_POLICY_VERSION), "explanation references policy version");
+  assert.ok(receipt!.explanation!.includes("5000ms"), "explanation includes observed age");
+
+  const summary = await getRevenueSummary();
+  const view = summary.recent.find((r) => r.at === settledAt);
+  assert.ok(view, "view found in summary.recent");
+  assert.equal(view!.policyVersion, X402_FRESHNESS_POLICY_VERSION);
+  assert.equal(view!.observedAt, observedAt);
+  assert.ok(view!.explanation);
+});
+
+test("historical explanation in stored receipts is preserved after configuration change", async () => {
+  const id = uid();
+  const settledAt = 1_800_000_000_000;
+  const observedAt = 1_800_000_002_000;
+  const initialMaxAgeMs = 300_000;
+
+  await recordPayment(makeEvent({
+    paymentIdentifier: id,
+    settledAt,
+    observedAt,
+    policy: { version: X402_FRESHNESS_POLICY_VERSION, maxAgeMs: initialMaxAgeMs },
+  }));
+
+  const receiptBefore = getStoredReceipt(id);
+  assert.ok(receiptBefore);
+  const originalExplanation = receiptBefore!.explanation;
+  assert.ok(originalExplanation);
+
+  // Simulate a subsequent configuration change that shrinks the freshness window
+  const originalEnv = process.env.X402_PAYMENT_MAX_AGE_MS;
+  try {
+    process.env.X402_PAYMENT_MAX_AGE_MS = "1000"; // 1s window (smaller than observed age of 2s)
+
+    // The stored receipt must still retain its historical explanation and policy
+    const receiptAfter = getStoredReceipt(id);
+    assert.ok(receiptAfter);
+    assert.equal(receiptAfter!.explanation, originalExplanation,
+      "stored receipt explanation must not change after config change");
+    assert.equal(
+      (receiptAfter!.policy as any).maxAgeMs,
+      initialMaxAgeMs,
+      "stored receipt policy maxAgeMs must preserve historical setting",
+    );
+
+    // explainPaymentFreshness must return the preserved historical explanation
+    const explained = explainPaymentFreshness(receiptAfter!);
+    assert.equal(explained, originalExplanation,
+      "explainPaymentFreshness must return historical explanation rather than re-evaluating with new config");
+  } finally {
+    if (originalEnv === undefined) delete process.env.X402_PAYMENT_MAX_AGE_MS;
+    else process.env.X402_PAYMENT_MAX_AGE_MS = originalEnv;
+  }
+});
+
+test("boundary case: payment at exact maxAge window edge records valid within-window explanation", async () => {
+  const id = uid();
+  const maxAgeMs = 300_000;
+  const observedAt = 1_800_000_300_000;
+  const settledAt = observedAt - maxAgeMs; // exactly at the boundary
+
+  await recordPayment(makeEvent({
+    paymentIdentifier: id,
+    settledAt,
+    observedAt,
+    policy: { version: X402_FRESHNESS_POLICY_VERSION, maxAgeMs },
+  }));
+
+  const receipt = getStoredReceipt(id);
+  assert.ok(receipt);
+  assert.ok(receipt!.explanation!.includes("is within window"),
+    "boundary age equal to maxAgeMs must explain as within window");
+  assert.ok(receipt!.explanation!.includes("300000ms"));
+});
+
+test("explainPaymentFreshness formats explanation for legacy receipts missing stored explanation", () => {
+  const legacyReceipt = {
+    settledAt: 1_800_000_000_000,
+    observedAt: 1_800_000_010_000,
+    policy: { version: "legacy-v1", maxAgeMs: 60_000 },
+  };
+  const explanation = explainPaymentFreshness(legacyReceipt);
+  assert.ok(explanation.includes("legacy-v1"));
+  assert.ok(explanation.includes("10000ms"));
+  assert.ok(explanation.includes("is within window"));
 });
