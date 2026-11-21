@@ -27,6 +27,7 @@ This guide collects causes, code references, and fixes for errors contributors, 
   - [17. Deadline in Past / Not Yet Expired (#10 vs #22)](#17-deadline-in-past--not-yet-expired-10-vs-22)
   - [18. Metadata Exceeds Byte Budget (#41 / #42)](#18-metadata-exceeds-byte-budget-41--42)
   - [19. Unconfigured Council Personas](#19-unconfigured-council-personas)
+  - [20. Uncertain Challenge Stake Submission (Recovery Panel)](#20-uncertain-challenge-stake-submission-recovery-panel)
 - [Contract Error Code Reference](#contract-error-code-reference)
   - [`mimir-market` Error Codes (1–47)](#mimir-market-error-codes-147)
   - [`mimir-squad` Error Codes (1–32)](#mimir-squad-error-codes-132)
@@ -353,6 +354,19 @@ This guide collects causes, code references, and fixes for errors contributors, 
 - **Code Location**:
   - `agents/council/index.ts:158` (`main`)
   - `agents/council/personas.ts:265-369` (`validatePersona`)
+
+### 20. Uncertain Challenge Stake Submission (Recovery Panel)
+
+- **Message**:
+  - `Your stake was submitted but its outcome is uncertain. Tracking the transaction — do not submit a second stake.`
+  - The market detail page shows a "Stake submission uncertain" panel and hides the stake action.
+- **Cause**: A user-signed `challenge_claim` was submitted but the client never observed the outcome (the wallet reported it pending, or the RPC threw after submission while carrying a transaction hash). Stellar is final on inclusion, so the transaction may still land; offering a second stake could double-stake the wallet.
+- **Fix**: No operator action is needed. The panel displays the submitted transaction hash with an explorer link and runs bounded automatic status checks (`CHALLENGE_RECOVERY_MAX_STATUS_CHECKS = 5`, one per ledger close). The record persists in `localStorage` under `proven_challenge_recovery` and stops blocking once the outcome is observed or the record expires (`CHALLENGE_RECOVERY_MAX_AGE_MS = 30 min`). Recovery never resubmits — Soroban contract state stays authoritative.
+- **Code Location**:
+  - `lib/challenge-recovery.ts` (state machine + storage)
+  - `hooks/useVsDetail.ts` (`challengeRecovery`, `beginChallengeRecovery`, `checkChallengeRecovery`, `dismissChallengeRecovery`)
+  - `components/vs/ChallengeRecoveryPanel.tsx` (UI)
+  - `app/[locale]/vs/[id]/page.tsx` (`handleAccept` pending/uncertain paths)
 
 ---
 
