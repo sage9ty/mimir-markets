@@ -56,6 +56,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_CONTENT_VALIDATION_POLICY_REVISION,
+  getContentValidationPolicyRevision,
   scanPrivacyFindings,
   summariseValidation,
   validateResearchContent,
@@ -659,4 +661,53 @@ test("unknown and discovered adapters fail closed (regression)", async () => {
   assert.equal(result.ok, false);
   assert.match("detail" in result ? result.detail : "", /admission/);
   assert.equal(researchAdapter(" OFFICIAL-WEB-V1 ")?.capability, "official_web");
+});
+
+test("validateResearchContent tags result with active policy revision", () => {
+  const s = makeSuccess("clean body");
+  const r = validateResearchContent(s, { policyRevision: "custom-rev-1" });
+  assert.equal(r.state, "valid");
+  assert.equal(r.usable, true);
+  assert.equal(r.policyRevision, "custom-rev-1");
+});
+
+test("validateResearchContent rejects FetchSuccess bound to incompatible policy revision", () => {
+  const s = {
+    ...makeSuccess("clean body"),
+    policyRevision: "v1",
+  };
+  const r = validateResearchContent(s, { policyRevision: "v2" });
+  assert.equal(r.state, "invalid");
+  assert.equal(r.usable, false);
+  assert.match(r.reason, /content-validation policy revision mismatch/);
+  assert.match(r.reason, /'v1'/);
+  assert.match(r.reason, /'v2'/);
+});
+
+test("validateResearchContent accepts FetchSuccess without policyRevision for backwards compatibility", () => {
+  const s = makeSuccess("clean body");
+  delete (s as any).policyRevision;
+  const r = validateResearchContent(s, { policyRevision: "v2" });
+  assert.equal(r.state, "valid");
+  assert.equal(r.usable, true);
+  assert.equal(r.policyRevision, "v2");
+});
+
+test("getContentValidationPolicyRevision fallback and environment handling", () => {
+  const orig = process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION;
+  try {
+    delete process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION;
+    delete process.env.RESEARCH_CONTENT_VALIDATION_REVISION;
+    assert.equal(getContentValidationPolicyRevision(), DEFAULT_CONTENT_VALIDATION_POLICY_REVISION);
+    assert.equal(getContentValidationPolicyRevision(), "v1");
+
+    process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION = "  release-2026-11  ";
+    assert.equal(getContentValidationPolicyRevision(), "release-2026-11");
+
+    process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION = "   ";
+    assert.equal(getContentValidationPolicyRevision(), "v1");
+  } finally {
+    if (orig !== undefined) process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION = orig;
+    else delete process.env.RESEARCH_CONTENT_VALIDATION_POLICY_REVISION;
+  }
 });
