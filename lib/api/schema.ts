@@ -18,6 +18,9 @@
  *    dropping a field is how a caller believes it set a cap that never applied.
  *  - **Every response carries its version**, so a cached body can be identified
  *    later rather than guessed at from its keys.
+ *  - **Repeated scalar query parameters with differing values are refused.**
+ *    Taking the first or last value silently would let a caller believe a filter
+ *    applied when another one was actually used.
  *
  * Pagination cursors are bound to the normalized query they were issued for
  * (see `bindCursor` / `verifyCursor`): a cursor minted under one sort or filter
@@ -75,6 +78,46 @@ export function resolveRequestVersion(
     };
   }
   return { ok: true, version };
+}
+
+// ── Query parameters ──────────────────────────────────────────────────────────
+
+export interface ScalarParamVerdict {
+  ok: boolean;
+  /** The single agreed value for the parameter. Present when ok and the key was supplied. */
+  value?: string;
+  reason?: "conflicting_values";
+  /** Stable field-level error message. Present when not ok. */
+  error?: string;
+  /** The distinct values that were sent. Present when not ok. */
+  values?: string[];
+}
+
+/**
+ * Resolve a scalar query parameter that may be repeated.
+ *
+ * Accepts the raw values as they come from the request (`string | string[] | undefined`).
+ * A single occurrence, or repeated occurrences that all carry the same value, resolve
+ * to that value. Repeated occurrences with differing values are refused with a stable
+ * field-level error rather than silently trusting the first or last value.
+ */
+export function resolveScalarParam(
+  name: string,
+  raw: string | readonly string[] | null | undefined,
+): ScalarParamVerdict {
+  if (raw === undefined || raw === null) return { ok: true };
+  const list = typeof raw === "string" ? [raw] : [...raw];
+  if (list.length === 0) return { ok: true };
+  const distinct = Array.from(new Set(list));
+  if (distinct.length > 1) {
+    return {
+      ok: false,
+      reason: "conflicting_values",
+      error: `${name} was supplied more than once with conflicting values`,
+      values: distinct,
+    };
+  }
+  return { ok: true, value: distinct[0] };
 }
 
 // ── Pagination cursors ────────────────────────────────────────────────────────

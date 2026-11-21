@@ -23,7 +23,7 @@ paths:
     get:
       operationId: listVsFeed
       summary: List public VS claims from the read index with cursor pagination.
-      description: "Returns public claims ordered by descending claim ID (`id_desc`), along with read-index freshness metadata (`cache`) and an optional `nextCursor` for pagination.\n\nPrivate claims are excluded from the public feed. Passing `refresh=1` triggers an index reconciliation before reading.\n\nCursors are bound to the normalized query filters (`refresh` excluded) that produced them. A cursor issued for one filter or sort selection is rejected with 400 `invalid_request` when reused with a different selection. Equal-ranked records are ordered deterministically by descending claim ID."
+      description: "Returns public claims ordered by descending claim ID (`id_desc`), along with read-index freshness metadata (`cache`) and an optional `nextCursor` for pagination.\n\nPrivate claims are excluded from the public feed. Passing `refresh=1` triggers an index reconciliation before reading."
       x-mimir-cache-control: "s-maxage=15, stale-while-revalidate=60"
       x-mimir-access-tier: public_read
       x-mimir-rate-limit-route: "/api/vs"
@@ -31,7 +31,7 @@ paths:
         - name: refresh
           in: query
           required: false
-          description: "Set to `\"1\"` to force a chain-to-index reconciliation before returning. Any other non-empty value is rejected with 400 `invalid_request`."
+          description: "Set to `\"1\"` to force a chain-to-index reconciliation before returning. Any other non-empty value is rejected with 400 `invalid_request`. Repeating this parameter with conflicting scalar values (for example `refresh=1&refresh=0`) is rejected with 400 `invalid_request` and a field-level error on `refresh`; the server never silently picks the first or last value."
           schema:
             type: string
             enum:
@@ -39,14 +39,14 @@ paths:
         - name: cursor
           in: query
           required: false
-          description: "Positive integer claim ID cursor (`id < cursor`). Cursors are bound to the normalized filter selection that issued them; reuse under a different selection is rejected with 400 `invalid_request`."
+          description: "Positive integer claim ID cursor (`id < cursor`). Repeating `cursor` with conflicting values is rejected with 400 `invalid_request` and a field-level error on `cursor`."
           schema:
             type: integer
             minimum: 1
         - name: limit
           in: query
           required: false
-          description: "Page size between 1 and 100 (defaults to 50)."
+          description: "Page size between 1 and 100 (defaults to 50). Repeating `limit` with conflicting values is rejected with 400 `invalid_request` and a field-level error on `limit`."
           schema:
             type: integer
             minimum: 1

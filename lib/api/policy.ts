@@ -43,6 +43,25 @@ export function isAccessTier(value: string): value is AccessTier {
   return (ACCESS_TIERS as readonly string[]).includes(value);
 }
 
+/**
+ * Reject repeated scalar query parameters that carry conflicting values.
+ *
+ * A scalar parameter repeated with identical values is tolerated; repeated with
+ * differing values it is ambiguous, so we refuse with a stable field-level error
+ * rather than silently trusting the first or last occurrence.
+ */
+export function assertScalarQueryParam(
+  name: string,
+  values: readonly string[] | string | undefined,
+): ApiErrorResult | null {
+  if (values === undefined || typeof values === "string") return null;
+  const distinct = new Set(values);
+  if (distinct.size > 1) {
+    return apiError("invalid_request", `query parameter "${name}" was repeated with conflicting values`);
+  }
+  return null;
+}
+
 export interface TierPolicy {
   tier: AccessTier;
   /** A wallet address must be present and proven. */
