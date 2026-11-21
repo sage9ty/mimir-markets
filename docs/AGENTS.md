@@ -38,6 +38,7 @@ lib/ops/dependency-audit.ts	Fail-closed npm audit triage (production high/critic
 lib/server/read-index-backup.ts	DB-backed read-index dump / verified restore (restore fingerprint check)
 scripts/verify-artifact-provenance.ts	CLI: verify or --write-pins contract artifacts
 scripts/verify-cache-backup.ts	CLI: offline cache-backup verification (npm run verify:cache-backup)
+scripts/verify-package-scripts.ts	CLI: verify package.json script contract against disk targets and CI/CONTRIBUTING docs (npm run verify:package-scripts)
 scripts/check-npm-audit.ts	CLI: triage npm audit --json (npm run audit:deps, no production secrets)
 scripts/backup-read-index.ts	CLI: dump the Neon read-index to a self-verified archive
 scripts/restore-read-index.ts	CLI: restore a verified archive and fingerprint-check the cache
@@ -83,9 +84,11 @@ environment behavior.
 | `deploy/contract-artifacts.manifest.json` | Pinned Wasm digests for fail-closed provenance checks |
 | `lib/ops/artifact-provenance.ts` | Offline SHA-256 artifact provenance verifier |
 | `lib/ops/cache-backup.ts` | Offline read-index cache-backup verifier (checksum + privacy, no network) |
+| `lib/ops/package-script-contract.ts` | Offline `package.json` script contract verifier against disk targets, argument forwarding, and CI/CONTRIBUTING refs |
 | `lib/server/read-index-backup.ts` | DB-backed read-index dump / verified restore (restore fingerprint check) |
 | `scripts/verify-artifact-provenance.ts` | CLI: verify or `--write-pins` contract artifacts |
 | `scripts/verify-cache-backup.ts` | CLI: offline cache-backup verification (`npm run verify:cache-backup`) |
+| `scripts/verify-package-scripts.ts` | CLI: offline `package.json` script contract verification (`npm run verify:package-scripts`) |
 | `scripts/backup-read-index.ts` | CLI: dump the Neon read-index to a self-verified archive |
 | `scripts/restore-read-index.ts` | CLI: restore a verified archive and fingerprint-check the cache |
 | `scripts/stellar-keys.ts` | Keypairs + Friendbot funding + USDC trustline |

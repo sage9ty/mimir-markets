@@ -92,7 +92,7 @@ const SHARED_FILES = new Set([
   ".gitignore",
 ]);
 
-const DOC_ONLY = new Set(["LICENSE", "README.md", "CHANGELOG.md"]);
+const DOC_ONLY = new Set(["LICENSE", "README.md", "CHANGELOG.md", "CONTRIBUTING.md"]);
 
 const DOC_ONLY_PREFIXES = ["docs/"];
 

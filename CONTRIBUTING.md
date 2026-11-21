@@ -7,7 +7,7 @@ Contributor quick start for this repository. This guide covers the common iterat
 This repo pins its toolchains so that local and CI environments match.
 
 - **Node.js+** — use the version in [`.nvmrc`](.nvmrc). If you use [nvm](https://github.com/nvm-sh/nvm), run `nvm use` in the repo root.
-Z- **Rust** — use the toolchain in [`rust-toolchain.toml`](rust-toolchain.toml). If you use [rustup](https://rustup.rs/), `rustup show` should report the pinned version and `rustup toolchain install` will fetch it if needed.
+- **Rust** — use the toolchain in [`rust-toolchain.toml`](rust-toolchain.toml). If you use [rustup](https://rustup.rs/), `rustup show` should report the pinned version and `rustup toolchain install` will fetch it if needed.
 
 ## Install
 
@@ -60,13 +60,42 @@ To run all tests in the crate:
 cargo test -p mimir-market
 ```
 
-## Typeycheck
+## Typecheck
 
 Before opening a PR, run the TypeScript typechecker:
 
 ```bash
 npm run typecheck
 ```
+
+## Verified package script contract
+
+All contributor, CI, and release scripts in `package.json` are pinned against real targets on disk by [`lib/ops/package-script-contract.ts`](lib/ops/package-script-contract.ts) and verified offline by:
+
+```bash
+npm run verify:package-scripts
+```
+
+Common verified commands:
+
+```bash
+npm run dev                  # Local Next.js dev server
+npm run build                # Production Next.js build
+npm run check:terms          # Forbidden-terms guardrail (alias: npm run lint)
+npm run check:toolchains     # Rust toolchain / MSRV / CI matrix parity
+npm run check:schema-snapshot # Postgres schema snapshot gate (-- --write to update)
+npm run check:locales:strict # Locale completeness check (non-strict: npm run check:locales)
+npm run check:driver-parity  # CI path-scope parity check
+npm run check:openapi        # Agent OpenAPI contract check (-- --write to regenerate)
+npm run verify:cache-backup -- tests/fixtures/cache-backup/valid.json
+npm run verify:release-readiness
+npm run test:node            # Full Node test suite (alias: npm run test:smoke)
+npm run test:coverage        # Money-moving module coverage thresholds via c8
+npm run smoke:browser        # Secret-free Playwright browser smoke
+npm run test:contracts       # Soroban Rust contract test suite
+```
+
+Single-command scripts forward trailing arguments via `npm run <script> -- <args...>` (for example `npm run check:openapi -- --write`, `npm run verify:cache-backup -- tests/fixtures/cache-backup/valid.json`, or `npm run test:node -- --no-cache`).
 
 ## Wave PR conventions
 
