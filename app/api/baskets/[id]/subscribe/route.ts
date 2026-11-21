@@ -9,6 +9,10 @@
  *
  * So the worst case of a bug here is a subscription row nobody asked for, not a
  * balance nobody can withdraw.
+ *
+ * A `preview` request returns the affected pending mirror suggestions and the
+ * composition identity for a prospective subscription change. It performs no
+ * market stake or allowance change and writes nothing.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -17,11 +21,12 @@ import { isStellarAccount, verifyStellarSignedMessage } from "@/lib/stellar-mess
 import { apiError } from "@/lib/api/errors";
 import { authorizeRequest } from "@/lib/api/policy";
 import { clientIpFrom } from "@/lib/api/origin";
-import { findAnyBAsketDefinition } from "@/lib/server/basket-directory";
+import { findAnyBasketDefinition } from "@/lib/server/basket-directory";
 import { subscribeToBasket, unsubscribeFromBasket } from "@/lib/db";
 import { subscriptionMessage } from "@/lib/baskets";
 import { validateSignedWindow } from "@/lib/signed-window";
 import { consumeNonce } from "@/lib/server/nonce-store";
+import { listPendingMirrorSuggestionsForBasket } from "@/lib/server/mirror-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
   let body: {
     subscriber?: string; perMarketUsdc?: number; signature?: string; unsubscribe?: boolean;
-    nonce?: string; expiresAt?: number;
+    nonce?: string; expiresAt?: number; preview?: boolean;
   };
   try {
     body = await req.json();
@@ -96,6 +101,30 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   if (!(await consumeNonce(`basket-subscription:${subscriber}`, `basket-subscription:${window.nonce}`))) {
     const err = apiError("conflict", "nonce already used; sign a fresh authorisation");
     return NextResponse.json(err.body, { status: err.status });
+  }
+
+  if (body.preview) {
+    // Read-only: list the pending mirror suggestions this change would affect.
+    // No stake, no allowance change, no subscription write.
+    const suggestions = await listPendingMirrorSuggestionsForBasket(id, subscriber);
+    return NextResponse.json(
+      {
+        preview: true,
+        action,
+        basketId: id,
+        subscriber,
+        perMarketUsdc: body.unsubscribe ? null : perMarketUsdc,
+        compositionId: basket.compositionId ?? null,
+        affectedSuggestions: suggestions.map((s) => ({
+          suggestionId: s.id,
+          marketId: s.marketId,
+          pendingUsdc: s.pendingUsdc,
+          status: s.status,
+        })),
+        note: "Preview only. No stake or allowance has changed.",
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
   }
 
   if (body.unsubscribe) {

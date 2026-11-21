@@ -171,7 +171,7 @@ export async function evaluatePersonaForClaim(
   }
 
   // Confident enough to stake. Size with Kelly, capped at 10% of bankroll.
-  // Note: the banzroll cap is enforced inside runPersonaForClaim where the
+  // Note: the bankroll cap is enforced inside runPersonaForClaim where the
   // wallet balance is read. Here we surface the base stake from the spec.
   return {
     shouldStake: true,
