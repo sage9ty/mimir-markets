@@ -151,3 +151,5 @@ Do not add placeholder English strings to non-English files as a "ship now, tran
 - **Arrays are opaque.** `flattenKeys` does not expand array indices. `create.challengeQuestionExamples` is treated as a single leaf. This matches how next-intl consumes array entries (`t.raw()`) and avoids false positives when an array is translated as a whole.
 - **Untranslated detection is string-only.** Numbers, booleans, and arrays that happen to be identical across locales are intentional (IDs, format patterns), so only `string`-typed values are compared.
 - **Extra keys are warnings, not errors.** A key present in a locale but absent from the English baseline was likely deleted from English. It is safe to ship (the runtime ignores unknown keys), but it signals the translator's file needs pruning.
+
+- **Portfolio performance separation.** Localized currency and date strings are presentation-only. Portfolio and chart calculation endpoints accept canonical numeric and atomic values (lib/portfolio-performance.ts). Formatted display strings must never be parsed back into money arithmetic.

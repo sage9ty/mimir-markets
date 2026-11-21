@@ -63,3 +63,62 @@ test("rejects malformed freshness and settlement counts", () => {
     false,
   );
 });
+
+test("rejects localized display strings to ensure presentation is never parsed into arithmetic", () => {
+  const invalidLocalizedPoints = [
+    { timestamp: 1_800_000_000_000, value: "$1,234.56" },
+    { timestamp: 1_800_000_000_000, value: "1,234.56" },
+    { timestamp: 1_800_000_000_000, value: "1.234,56" },
+    { timestamp: 1_800_000_000_000, value: "12.50 USDC" },
+    { timestamp: 1_800_000_000_000, value: null },
+    { timestamp: 1_800_000_000_000, value: undefined },
+  ];
+
+  for (const point of invalidLocalizedPoints) {
+    assert.equal(
+      isPortfolioPerformanceResponse({
+        points: [point as unknown as { timestamp: number; value: number }],
+        settled: 1,
+        cache: CACHE,
+      }),
+      false,
+      `expected point with value ${JSON.stringify(point.value)} to be rejected`,
+    );
+  }
+});
+
+test("preserves canonical numeric values across locale formatting switches", () => {
+  const payload = {
+    points: [
+      { timestamp: 1_800_000_000_000, value: 1234.5678901 },
+      { timestamp: 1_800_000_060_000, value: -0.0000001 },
+    ],
+    settled: 2,
+    cache: CACHE,
+  };
+
+  assert.equal(isPortfolioPerformanceResponse(payload), true);
+
+  const locales = ["en-US", "de-DE", "es-ES", "fr-FR"];
+  for (const locale of locales) {
+    const formatter = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const formatted = payload.points.map((point) => formatter.format(point.value));
+    assert.equal(formatted.length, payload.points.length);
+
+    // Formatting for display must not mutate canonical inputs or re-enter the boundary.
+    assert.equal(payload.points[0].value, 1234.5678901);
+    assert.equal(payload.points[1].value, -0.0000001);
+    assert.equal(
+      isPortfolioPerformanceResponse({
+        points: [{ timestamp: payload.points[0].timestamp, value: formatted[0] }],
+        settled: 1,
+        cache: CACHE,
+      }),
+      false,
+      `formatted string for locale ${locale} must be rejected at the calculation boundary`,
+    );
+  }
+});
