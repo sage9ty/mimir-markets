@@ -85,11 +85,15 @@ export function recordPayment(e: PaymentEvent): Promise<void> {
   });
 }
 
-/** One recent payment, decimals applied for display. */
+/** One recent payment, with exact atomic integer string + explicit decimals. */
 export interface RevenuePaymentView {
   resource: string;
   network: string;
   assetSymbol: string;
+  assetDecimals: number;
+  /** Exact settled integer amount in atomic token units (base-10 string). */
+  amountAtomic: string;
+  /** Display-only conversion derived from `amountAtomic`. */
   amountUsdc: number;
   payer: string | null;
   seller: string | null;
@@ -100,19 +104,31 @@ export interface RevenuePaymentView {
 }
 
 export interface RevenueSummary {
+  /** Decimals for all `*Atomic` integer string fields in this statement. */
+  assetDecimals: number;
   totalCalls: number;
   /** Portion of totalCalls carried over from an earlier deployment (0 when unset). */
   baselineCalls: number;
+  /** Exact integer total (ledger + baseline) in atomic token units. */
+  totalAtomic: string;
+  /** Exact integer baseline carried over from an earlier deployment (`"0"` when unset). */
+  baselineAtomic: string;
   totalUsdc: number;
   /** Portion of totalUsdc carried over from an earlier deployment (0 when unset). */
   baselineUsdc: number;
   uniquePayers: number;
   uniqueSellers: number;
-  byResource: Array<{ resource: string; calls: number; usdc: number }>;
-  bySeller: Array<{ seller: string; calls: number; usdc: number }>;
+  byResource: Array<{ resource: string; calls: number; amountAtomic: string; usdc: number }>;
+  bySeller: Array<{ seller: string; calls: number; amountAtomic: string; usdc: number }>;
   recent: RevenuePaymentView[];
   market: {
     settledMarkets: number;
+    grossVolumeAtomic: string;
+    payoutAtomic: string;
+    platformFeeAtomic: string;
+    agentOwnerFeeAtomic: string;
+    dustAtomic: string;
+    unclaimedAtomic: string;
     grossVolumeUsdc: number;
     payoutUsdc: number;
     platformFeeUsdc: number;
@@ -122,8 +138,28 @@ export interface RevenueSummary {
   };
 }
 
+export interface OwnerRevenueStatement {
+  owner: string;
+  assetSymbol: string;
+  assetDecimals: number;
+  totalCalls: number;
+  /** Exact integer sum of all settled payments to `owner` (base-10 string). */
+  totalAtomic: string;
+  /** Display-only conversion derived from `totalAtomic`. */
+  totalUsdc: number;
+  uniquePayers: number;
+  byResource: Array<{ resource: string; calls: number; amountAtomic: string; usdc: number }>;
+  payments: RevenuePaymentView[];
+}
+
 const EMPTY_MARKET: RevenueSummary["market"] = {
   settledMarkets: 0,
+  grossVolumeAtomic: "0",
+  payoutAtomic: "0",
+  platformFeeAtomic: "0",
+  agentOwnerFeeAtomic: "0",
+  dustAtomic: "0",
+  unclaimedAtomic: "0",
   grossVolumeUsdc: 0,
   payoutUsdc: 0,
   platformFeeUsdc: 0,
@@ -146,14 +182,106 @@ export function baselineCalls(): number {
   return Math.floor(positiveEnvNumber("PAYMENTS_BASELINE_CALLS"));
 }
 
+/**
+ * Exact integer baseline in 7-decimal atomic USDC, parsed without floating-point
+ * arithmetic. Returns `0n` when unset, zero, negative, or malformed.
+ */
+export function baselineAtomic(
+  env: Record<string, string | undefined> = process.env,
+): bigint {
+  const raw = env.PAYMENTS_BASELINE_USDC?.trim();
+  if (!raw) return 0n;
+  try {
+    const parsed = parseUsdcAtomic(raw);
+    return parsed > 0n ? parsed : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
 export function baselineUsdc(): number {
-  return Math.round(positiveEnvNumber("PAYMENTS_BASELINE_USDC") * 1e6) / 1e6;
+  return unitsToUsdc(baselineAtomic());
+}
+
+function compareBigIntDesc(a: bigint, b: bigint): number {
+  return b > a ? 1 : b < a ? -1 : 0;
+}
+
+/**
+ * Build an exact owner/seller revenue statement from settled payment events.
+ *
+ * Accumulates all totals strictly in `bigint` atomic units (never IEEE-754
+ * floats) and serializes every integer amount as a base-10 string alongside
+ * explicit `assetDecimals`. Seller matching is exact case-sensitive base32.
+ */
+export function buildOwnerRevenueStatement(args: {
+  owner: string;
+  paymentEvents: readonly PaymentEvent[];
+  limit?: number;
+  assetDecimals?: number;
+}): OwnerRevenueStatement {
+  const { owner, paymentEvents, limit = 50, assetDecimals = USDC_DECIMALS } = args;
+  const trimmedOwner = owner.trim();
+  const matched: PaymentEvent[] = [];
+  const byResource = new Map<string, { calls: number; atomic: bigint }>();
+  const payers = new Set<string>();
+  let totalAtomic = 0n;
+
+  for (const e of paymentEvents) {
+    if (e.seller !== trimmedOwner) continue;
+    if (typeof e.amountAtomic !== "bigint" || e.amountAtomic < 0n) {
+      throw new Error(`Invalid atomic payment amount for ${e.paymentIdentifier}`);
+    }
+    matched.push(e);
+    totalAtomic += e.amountAtomic;
+    if (e.payer) payers.add(e.payer);
+    const r = byResource.get(e.resource) ?? { calls: 0, atomic: 0n };
+    r.calls += 1;
+    r.atomic += e.amountAtomic;
+    byResource.set(e.resource, r);
+  }
+
+  return {
+    owner: trimmedOwner,
+    assetSymbol: USDC_SYMBOL,
+    assetDecimals,
+    totalCalls: matched.length,
+    totalAtomic: totalAtomic.toString(),
+    totalUsdc: unitsToUsdc(totalAtomic),
+    uniquePayers: payers.size,
+    byResource: [...byResource.entries()]
+      .sort((a, b) => compareBigIntDesc(a[1].atomic, b[1].atomic))
+      .map(([resource, v]) => ({
+        resource,
+        calls: v.calls,
+        amountAtomic: v.atomic.toString(),
+        usdc: unitsToUsdc(v.atomic),
+      })),
+    payments: matched
+      .slice(-Math.max(0, limit))
+      .reverse()
+      .map((e) => ({
+        resource: e.resource,
+        network: e.network,
+        assetSymbol: USDC_SYMBOL,
+        assetDecimals,
+        amountAtomic: e.amountAtomic.toString(),
+        amountUsdc: unitsToUsdc(e.amountAtomic),
+        payer: e.payer,
+        seller: e.seller,
+        transactionHash: e.transactionHash,
+        at: e.settledAt,
+      })),
+  };
 }
 
 function fromDbSummary(s: PaymentsRevenueSummary): RevenueSummary {
   return {
+    assetDecimals: USDC_DECIMALS,
     totalCalls: s.totalCalls,
     baselineCalls: 0,
+    totalAtomic: s.totalAtomic.toString(),
+    baselineAtomic: "0",
     baselineUsdc: 0,
     totalUsdc: unitsToUsdc(s.totalAtomic),
     uniquePayers: s.uniquePayers,
@@ -161,17 +289,21 @@ function fromDbSummary(s: PaymentsRevenueSummary): RevenueSummary {
     byResource: s.byResource.map((r) => ({
       resource: r.resource,
       calls: r.calls,
+      amountAtomic: r.amountAtomic.toString(),
       usdc: unitsToUsdc(r.amountAtomic),
     })),
     bySeller: s.bySeller.map((r) => ({
       seller: r.seller,
       calls: r.calls,
+      amountAtomic: r.amountAtomic.toString(),
       usdc: unitsToUsdc(r.amountAtomic),
     })),
     recent: s.recent.map((r) => ({
       resource: r.resource,
       network: r.network,
       assetSymbol: r.asset_symbol,
+      assetDecimals: r.asset_decimals ?? USDC_DECIMALS,
+      amountAtomic: r.amount_atomic.toString(),
       amountUsdc: unitsToUsdc(r.amount_atomic),
       payer: r.payer,
       seller: r.seller,
@@ -208,18 +340,31 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
     byResource.set(e.resource, r);
   }
   return {
+    assetDecimals: USDC_DECIMALS,
     totalCalls: events.length,
     baselineCalls: 0,
+    totalAtomic: totalAtomic.toString(),
+    baselineAtomic: "0",
     baselineUsdc: 0,
     totalUsdc: unitsToUsdc(totalAtomic),
     uniquePayers: payers.size,
     uniqueSellers: sellers.size,
     byResource: [...byResource.entries()]
-      .map(([resource, v]) => ({ resource, calls: v.calls, usdc: unitsToUsdc(v.atomic) }))
-      .sort((a, b) => b.usdc - a.usdc),
+      .sort((a, b) => compareBigIntDesc(a[1].atomic, b[1].atomic))
+      .map(([resource, v]) => ({
+        resource,
+        calls: v.calls,
+        amountAtomic: v.atomic.toString(),
+        usdc: unitsToUsdc(v.atomic),
+      })),
     bySeller: [...bySeller.entries()]
-      .map(([seller, v]) => ({ seller, calls: v.calls, usdc: unitsToUsdc(v.atomic) }))
-      .sort((a, b) => b.usdc - a.usdc),
+      .sort((a, b) => compareBigIntDesc(a[1].atomic, b[1].atomic))
+      .map(([seller, v]) => ({
+        seller,
+        calls: v.calls,
+        amountAtomic: v.atomic.toString(),
+        usdc: unitsToUsdc(v.atomic),
+      })),
     recent: events
       .slice()
       .reverse()
@@ -228,6 +373,8 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
         resource: e.resource,
         network: e.network,
         assetSymbol: USDC_SYMBOL,
+        assetDecimals: USDC_DECIMALS,
+        amountAtomic: e.amountAtomic.toString(),
         amountUsdc: unitsToUsdc(e.amountAtomic),
         payer: e.payer,
         seller: e.seller,
@@ -243,14 +390,17 @@ function inMemorySummary(limit: number, offset: number): RevenueSummary {
 export async function getRevenueSummary(limit = 25, offset = 0): Promise<RevenueSummary> {
   const withBaseline = (s: RevenueSummary): RevenueSummary => {
     const calls = baselineCalls();
-    const usdc = baselineUsdc();
-    if (calls === 0 && usdc === 0) return s;
+    const baseAtomic = baselineAtomic();
+    if (calls === 0 && baseAtomic === 0n) return s;
+    const combinedAtomic = BigInt(s.totalAtomic) + baseAtomic;
     return {
       ...s,
       totalCalls: s.totalCalls + calls,
       baselineCalls: calls,
-      totalUsdc: Math.round((s.totalUsdc + usdc) * 1e6) / 1e6,
-      baselineUsdc: usdc,
+      totalAtomic: combinedAtomic.toString(),
+      baselineAtomic: baseAtomic.toString(),
+      totalUsdc: unitsToUsdc(combinedAtomic),
+      baselineUsdc: unitsToUsdc(baseAtomic),
     };
   };
   try {
@@ -262,6 +412,12 @@ export async function getRevenueSummary(limit = 25, offset = 0): Promise<Revenue
       ...withBaseline(fromDbSummary(payments)),
       market: {
         settledMarkets: market.settledMarkets,
+        grossVolumeAtomic: market.grossVolumeAtomic.toString(),
+        payoutAtomic: market.payoutAtomic.toString(),
+        platformFeeAtomic: market.platformFeeAtomic.toString(),
+        agentOwnerFeeAtomic: market.agentOwnerFeeAtomic.toString(),
+        dustAtomic: market.dustAtomic.toString(),
+        unclaimedAtomic: market.unclaimedAtomic.toString(),
         grossVolumeUsdc: unitsToUsdc(market.grossVolumeAtomic),
         payoutUsdc: unitsToUsdc(market.payoutAtomic),
         platformFeeUsdc: unitsToUsdc(market.platformFeeAtomic),
