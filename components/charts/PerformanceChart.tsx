@@ -93,17 +93,26 @@ export function PerformanceChart({
   const pathRef = useRef<SVGPathElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const allSeries = series && series.length > 0 ? series : points ? [{ points }] : [];
+  const allSeries: ChartSeries[] =
+    series && series.length > 0 ? series : points ? [{ points }] : [];
   const primaryCount = allSeries[0]?.points.length ?? 0;
-  const invalid = !Number.isFinite(baseline) || allSeries.some((s) =>
-    s.points.some((point) =>
-      !Number.isFinite(point.timestamp) || point.timestamp <= 0 || !Number.isFinite(point.value)
-    )
-  );
+  const invalid =
+    !Number.isFinite(baseline) ||
+    allSeries.some((s) =>
+      s.points.some(
+        (point) =>
+          !Number.isFinite(point.timestamp) ||
+          point.timestamp <= 0 ||
+          !Number.isFinite(point.value),
+      ),
+    );
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return setDrawn(true);
+    if (reduced) {
+      setDrawn(true);
+      return;
+    }
     // Next frame, so the dashoffset transition has an initial value to move from.
     const frame = requestAnimationFrame(() => setDrawn(true));
     return () => cancelAnimationFrame(frame);
@@ -135,33 +144,45 @@ export function PerformanceChart({
     // A flat series would divide by zero; give it a nominal band so it centres.
     const span = max - min || Math.max(1, Math.abs(max) * 0.02);
 
+    const y = (value: number) =>
+      VIEW_HEIGHT - PAD_Y - ((value - min) / span) * (VIEW_HEIGHT - PAD_Y * 2);
+
     const buildSeriesGeom = (s: ChartSeries) => {
       const pts = s.points;
-      if (pts.length === 0) return { coords: [] as Array<{ x: number; y: number; timestamp: number; value: number; coverage?: ChartPoint["coverage"] }>, line: "", area: "" };
+      if (pts.length === 0) {
+        return {
+          coords: [] as Array<{ x: number; y: number; timestamp: number; value: number; coverage?: ChartPoint["coverage"] }>,
+          line: "",
+          area: "",
+        };
+      }
       const x = (index: number) =>
         PAD_X + (index / Math.max(1, pts.length - 1)) * (VIEW_WIDTH - PAD_X * 2);
-      const y = (value: number) =>
-        VIEW_HEIGHT - PAD_Y - ((value - min) / span) * (VIEW_HEIGHT - PAD_Y * 2);
       const coords = pts.map((point, index) => ({
         x: x(index), y: y(point.value), timestamp: point.timestamp, value: point.value, coverage: point.coverage,
       }));
-      const line = pts.length === 1
-        ? `M${PAD_X},${coords[0].y} L${VIEW_WIDTH - PAD_X},${coords[0].y}`
-        : coords.map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
-      const area = `${line} L${(pts.length === 1 ? VIEW_WIDTH - PAD_X : coords.at(-1)!.x).toFixed(1)},${VIEW_HEIGHT - PAD_Y} L${PAD_X},${VIEW_HEIGHT - PAD_Y} Z`;
+      // A single point has no line; draw a short flat stub so the dot has context.
+      const line =
+        pts.length === 1
+          ? `M${PAD_X},${coords[0].y} L${VIEW_WIDTH - PAD_X},${coords[0].y}`
+          : coords
+              .map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+              .join(" ");
+      const endX = pts.length === 1 ? VIEW_WIDTH - PAD_X : coords[coords.length - 1].x;
+      const area = `${line} L${endX.toFixed(1)},${VIEW_HEIGHT - PAD_Y} L${PAD_X},${VIEW_HEIGHT - PAD_Y} Z`;
       return { coords, line, area };
     };
 
     const seriesGeoms = allSeries.map(buildSeriesGeom);
-    const y = (value: number) =>
-      VIEW_HEIGHT - PAD_Y - ((value - min) / span) * (VIEW_HEIGHT - PAD_Y * 2);
-
-    const primaryPoints = allSeries[0].points;
-    const firstTimestamp = primaryPoints[0].timestamp;
-    const lastTimestamp = primaryPoints[primaryPoints.length - 1].timestamp;
-    const baselineY = y(baseline);
-    return { seriesGeoms, baselineY, firstTimestamp, lastTimestamp };
-  }, [points, series, baseline, invalid]);
+    const firstTimestamp = Math.min(...allPoints.map((p) => p.timestamp));
+    const lastTimestamp = Math.max(...allPoints.map((p) => p.timestamp));
+    return {
+      seriesGeoms,
+      baselineY: y(baseline),
+      firstTimestamp,
+      lastTimestamp,
+    };
+  }, [allSeries, baseline, invalid]);
 
   if (invalid) {
     return (
@@ -176,7 +197,7 @@ export function PerformanceChart({
 
   if (!geometry) {
     return (
-      <div className="border border-pv-ink/[0.1] bv-surface/40 px-4 py-12 text-center text-sm text-pv-muted">
+      <div className="border border-pv-ink/[0.1] bg-pv-surface/40 px-4 py-12 text-center text-sm text-pv-muted">
         {emptyMessage}
       </div>
     );
@@ -190,7 +211,7 @@ export function PerformanceChart({
   const activePoint = activeCoord ?? primary.coords[count - 1];
   const last = primary.coords[count - 1];
   const up = last.value >= baseline;
-  const stroke = up ? "rgb(var(--pv-accent))" : "rgb(var(--pv-danger))";
+  const stroke = allSeries[0].stroke ?? (up ? "rgb(var(--pv-accent))" : "rgb(var(--pv-danger))");
   const length = pathRef.current?.getTotalLength?.() ?? 2000;
   const table = buildPerformanceChartRows(points, valueSuffix);
 
@@ -255,9 +276,13 @@ export function PerformanceChart({
         </defs>
 
         <line
-          x1={PAD_X} x2={VIEW_WIDTH - PAD_X}
-          y1={geometry.baselineY} y2={geometry.baselineY}
-          stroke="rgb(var(--pv-ink) / 0.18)" strokeWidth="1" strokeDasharray="3 4"
+          x1={PAD_X}
+          x2={VIEW_WIDTH - PAD_X}
+          y1={geometry.baselineY}
+          y2={geometry.baselineY}
+          stroke="rgb(var(--pv-ink) / 0.18)"
+          strokeWidth="1"
+          strokeDasharray="3 4"
         />
 
         <path
@@ -290,8 +315,8 @@ export function PerformanceChart({
             width={
               index === primary.coords.length - 1
                 ? VIEW_WIDTH
-                : (primary.coords[index + 1].x - coord.x) / 2
-                  + (index === 0 ? coord.x : (coord.x - primary.coords[index - 1].x) / 2)
+                : (primary.coords[index + 1].x - coord.x) / 2 +
+                  (index === 0 ? coord.x : (coord.x - primary.coords[index - 1].x) / 2)
             }
             height={VIEW_HEIGHT}
             fill="transparent"
@@ -301,8 +326,12 @@ export function PerformanceChart({
 
         {(hover !== null || focusIndex !== null) && activeCoord && (
           <line
-            x1={activeCoord.x} x2={activeCoord.x} y1={PAD_Y} y2={VIEW_HEIGHT - PAD_Y}
-            stroke="rgb(var(--pv-ink) / 0.2)" strokeWidth="1"
+            x1={activeCoord.x}
+            x2={activeCoord.x}
+            y1={PAD_Y}
+            y2={VIEW_HEIGHT - PAD_Y}
+            stroke="rgb(var(--pv-ink) / 0.2)"
+            strokeWidth="1"
           />
         )}
         <circle
@@ -339,9 +368,7 @@ export function PerformanceChart({
         {showData && (
           <div id={tableId} className="max-h-64 w-full overflow-auto">
             <table className="w-full border-collapse text-left font-mono text-xs text-pv-text">
-              <caption className="py-1 text-left text-pv-muted">
-                {label}
-              </caption>
+              <caption className="py-1 text-left text-pv-muted">{label}</caption>
               <thead>
                 <tr className="text-pv-muted">
                   <th scope="col" className="py-1 pr-3 font-semibold">Date</th>

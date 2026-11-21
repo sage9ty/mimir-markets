@@ -17,6 +17,18 @@ import { parsePerMarketUsdc, subscriptionMessage } from "@/lib/baskets";
 /** How long a signed (un)subscribe stays acceptable; the server caps it at 5 min. */
 const SIGNATURE_TTL_MS = 2 * 60_000;
 
+type PreviewState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | {
+      status: "ready";
+      compositionId: string;
+      affectedSuggestions: Array<{ id: string; marketId: string; side: string; proposedUsdc: number }>;
+      marketStakeChanged: false;
+      allowanceChanged: false;
+    }
+  | { status: "error"; message: string };
+
 export function FollowBasket({
   basketId, creatorWallet,
 }: { basketId: string; creatorWallet?: string }) {
@@ -29,6 +41,7 @@ export function FollowBasket({
   const [error, setError] = useState<string | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
 
   // Your own basket charges you no basket fee, so say so before they pay attention
   // to the fee line rather than after. Exact comparison, not a lowercased one:
@@ -45,6 +58,31 @@ export function FollowBasket({
     setPerMarket(parsed.value);
     setPerMarketInput(String(parsed.value));
     return parsed.value;
+  }
+
+  async function loadPreview(nextAmount: number, unsubscribe: boolean) {
+    if (!address) return;
+    setPreview({ status: "loading" });
+    try {
+      const params = new URLSearchParams({
+        subscriber: address,
+        perMarketUsdc: String(nextAmount),
+        unsubscribe: String(unsubscribe),
+      });
+      const response = await fetch(`/api/baskets/${basketId}/subscribe/preview?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message ?? "could not load preview");
+      setPreview({
+        status: "ready",
+        compositionId: payload.compositionId,
+        affectedSuggestions: payload.affectedSuggestions ?? [],
+        marketStakeChanged: false,
+        allowanceChanged: false,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPreview({ status: "error", message });
+    }
   }
 
   async function toggle() {
@@ -94,9 +132,10 @@ export function FollowBasket({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error?.message ?? "could not update subscription");
       setFollowing(Boolean(payload.subscribed));
+      setPreview({ status: "idle" });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(`user rejected|denied`.test(message) ? "Signature rejected in your wallet." : message);
+      setError(/user rejected|denied/i.test(message) ? "Signature rejected in your wallet." : message);
     } finally {
       setBusy(false);
     }
@@ -130,6 +169,14 @@ export function FollowBasket({
         </label>
         <button
           type="button"
+          onClick={() => void loadPreview(perMarket, following)}
+          disabled={busy || !address || preview.status === "loading"}
+          className="border border-pv-ink/[0.14] px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-pv-muted transition-colors hover:text-pv-text"
+        >
+          Preview changes
+        </button>
+        <button
+          type="button"
           onClick={toggle}
           disabled={busy}
           className={following
@@ -145,6 +192,32 @@ export function FollowBasket({
 
       {inputError && <p className="mt-2 text-[12px] text-pv-danger">{inputError}</p>}
       {error && <p className="mt-2 text-[12px] text-pv-danger">{error}</p>}
+
+      {preview.status === "loading" && (
+        <p className="mt-2 text-[12px] text-pv-muted">Loading preview…</p>
+      )}
+      {preview.status === "error" && (
+        <p className="mt-2 text-[12px] text-pv-danger">{preview.message}</p>
+      )}
+      {preview.status === "ready" && (
+        <div className="mt-3 space-y-2 border-t border-pv-ink/[0.08] pt-3 text-[12px] text-pv-muted">
+          <p className="font-mono text-[10px] uppercase tracking-wider">
+            Composition <span className="text-pv-text">{preview.compositionId}</span>
+          </p>
+          {preview.affectedSuggestions.length === 0 ? (
+            <p>No pending mirror suggestions would change.</p>
+          ) : (
+            <ul className="space-y-1">
+              {preview.affectedSuggestions.map((s) => (
+                <li key={s.id} className="font-mono text-[11px]">
+                  {s.marketId} · {s.side} · {s.proposedUsdc} USDC
+                </li>
+              ))}
+            </ul>
+          )}
+          <p>No market stake or allowance changes are made by this preview.</p>
+        </div>
+      )}
 
       <FeeBreakdown context="follow" isOwn={isOwn} />
     </div>

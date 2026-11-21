@@ -144,6 +144,21 @@ trustline makes the Stellar Asset Contract transfer fail — is parked as a
 withdrawable balance rather than failing the whole settlement
 (`escrow::push_or_park`, tested by `a_blocked_challenger_has_their_payout_parked`).
 
+### Partial settlements, refunds, fees and incomplete history
+
+The off-chain portfolio statement is derived from indexed events and is checked
+against totals computed independently of the production reducer. Fixtures in
+`tests/node/portfolio-statement-comparison.fixtures.ts` are synthetic and
+deterministic: they cover partial settlements (a claim settled in several pulls
+with a remainder), refunds (cancelled claims and parked refunds), fees (profit-only
+fee snapshots with and without a recipient), and incomplete history (events that
+are missing or arrive out of order, which must be reported rather than silently
+totalled). The expected totals are summed directly from the fixture events with
+integer atomic-USDC arithmetic and compared against the reducer output in
+`lib/portfolio-performance.ts`. A boundary case with a missing settlement event
+asserts the statement is flagged incomplete instead of reporting a partial total
+as final.
+
 ### Cancellation is guarded against active claims
 
 `cancel_claim` is the one lifecycle transition where the creator — not the oracle —
@@ -197,25 +212,4 @@ Source: `contracts-soroban/mimir-squad/src/pool.rs`. Tests: `src/test_lifecycle.
   a second payout.
 - `src/test_dust_isolation.rs` isolates the same dust property for the squad pool:
   the final winner's gross is `formula + dust`, the dust is identical under either
-  claim order, an exactly dividing pool leaves none, conservation holds after every
-  claim, and preview equals payout.
-
-## Virtual baskets
-
-Source: `lib/baskets.ts`. Tests: `tests/node/baskets.test.ts`,
-`tests/node/basket-returns.test.ts`.
-
-- Weights equal exactly 10,000 bps and single-agent/category caps are enforced.
-- Paused/stale/failed-copy allocation remains idle USDC and cannot fabricate NAV.
-- Share/deposit/redemption and high-water-mark calculations use integer rounding
-  with explicit dust ownership.
-- Funded deposits remain off until the external audit and legal/eligibility gates in
-  `LAUNCH_GATE_STATUS.md` are complete.
-
-## Reentrancy
-
-There is no reentrancy guard in these contracts, and that is not an omission: the
-Soroban host rejects a call that re-enters a contract already on the call stack, so
-the EVM `nonReentrant` modifier has no counterpart to port. The ordering discipline it protected
-(state written before an external transfer) is kept anyway, because it is also what
-makes the pull paths correct.
+  claim order, an exactly dividing pool leaves none

@@ -6,11 +6,11 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "rm -rf .next && next dev",
+    "dev": "node init && next dev",
+    "dev:clean": "node init && rm -rf .next && next dev",
     "clean": "rm -rf .next",
-    "build": "next build",
-    "start": "next start",
+    "build": "node init && next build",
+    "start": "node init && next start",
     "typecheck": "tsc --noEmit",
     "check:terms": "node scripts/check-forbidden-terms.mjs",
     "lint": "npm run check:terms",
