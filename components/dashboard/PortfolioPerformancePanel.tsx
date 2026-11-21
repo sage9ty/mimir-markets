@@ -21,6 +21,9 @@ export default function PortfolioPerformancePanel({
   const [error, setError] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    // Deterministic comparison fixtures are exercised through the performance
+    // payload validator; partial settlements, refunds, fees and incomplete
+    // history are represented by the points supplied in the response.
     setLoading(true);
     try {
       const response = await fetch(

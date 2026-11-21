@@ -29,49 +29,49 @@ describe('sortDecodedMessagesBySentAt', () => {
     const a = msg('a', 300n);
     const b = msg('b', 100n);
     const c = msg('c', 200n);
-    const out = sortDecodedMessagesBySentAt([a, b, c]);
-    expect(out.map((m) => m.id)).toEqual(['b', 'c', 'a']);
+    const out = sortDecodedMessagesBySentAt([a, b, c] as any);
+    expect(out.map((m: any) => m.id)).toEqual(['b', 'c', 'a']);
   });
 
-  it('preserves stability for equal timestamps', ()=> {
+  it('preserves stability for equal timestamps', () => {
     const a = msg('a', 100n, { text: 'a' });
     const b = msg('b', 100n, { text: 'b' });
     const c = msg('c', 100n, { text: 'c' });
-    const out = sortDecodedMessagesBySentAt([a, b, c]);
-    expect(out.map((m) => m.id)).toEqual(['a', 'b', 'c']);
+    const out = sortDecodedMessagesBySentAt([a, b, c] as any);
+    expect(out.map((m: any) => m.id)).toEqual(['a', 'b', 'c']);
   });
 
   it('does not mutate the input array', () => {
     const a = msg('a', 200n);
     const b = msg('b', 100n);
     const input = [a, b];
-    const out = sortDecodedMessagesBySentAt(input);
+    const out = sortDecodedMessagesBySentAt(input as any);
     expect(input.map((m) => m.id)).toEqual(['a', 'b']);
-    expect(out.map((m) => m.id)).toEqual(['b', 'a']);
+    expect(out.map((m: any) => m.id)).toEqual(['b', 'a']);
   });
 
   it('handles empty array', () => {
-    expect(sortDecodedMessagesBySentAt([])).toEqual([]);
+    expect(sortDecodedMessagesBySentAt([] as any)).toEqual([]);
   });
 });
 
 describe('getDecodedMessageText', () => {
   it('returns text for plain string content', () => {
-    expect(getDecodedMessageText(msg('a', 1n, 'hello'))).toEqual('hello');
+    expect(getDecodedMessageText(msg('a', 1n, 'hello') as any)).toEqual('hello');
   });
 
   it('returns text field when present', () => {
-    expect(getDecodedMessageText(msg('a', 1n, { text: 'hi' }))).toEqual('hi');
+    expect(getDecodedMessageText(msg('a', 1n, { text: 'hi' }) as any)).toEqual('hi');
   });
 
   it('returns empty string for non-text content', () => {
-    const out = getDecodedMessageText(msg('a', 1n, { attachment: 'file' }));
+    const out = getDecodedMessageText(msg('a', 1n, { attachment: 'file' }) as any);
     expect(typeof out).toBe('string');
     expect(out).toEqual('');
   });
 
   it('handles missing content', () => {
-    expect(getDecodedMessageText(msg('a', 1n))).toEqual('');
+    expect(getDecodedMessageText(msg('a', 1n) as any)).toEqual('');
   });
 });
 
