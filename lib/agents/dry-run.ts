@@ -9,10 +9,21 @@
  * the staked amount — so the caller now passes the agent's spendable USDC BALANCE,
  * which is the constraint that actually decides whether the stake goes through.
  * The arithmetic is identical either way: "have >= need".
+ *
+ * Rounding rule (stake sizing): stake amounts are integer atomic USDC (7 decimals)
+ * end to end. Any fractional-atomic remainder from a basis-point calculation is
+ * truncated toward zero by `usdcToUnits`, never rounded up, so a stake can never
+ * exceed the requested USDC amount. The applied rule and the remainder are surfaced
+ * in the dry-run output under `sizing` so the rounding is auditable.
  */
 import { splitFees, snapshotFeePolicy, type SettlementOutcome } from "@/lib/fees";
 import { unitsToUsdc, usdcToUnits } from "@/lib/usdc";
 import type { ActionVerdict } from "./registry";
+
+/** Version of the stake-sizing rounding policy. Bump when the rule changes. */
+export const STAKE_SIZING_POLICY_VERSION = "1";
+
+export const STAKE_SIZING_ROUNDING = "truncate_toward_zero";
 
 export function buildAgentDryRun(args: {
   principalUsdc: number;
@@ -27,9 +38,11 @@ export function buildAgentDryRun(args: {
   ownerRecipient: string;
   policy: ActionVerdict;
 }) {
+  const principalUnits = usdcToUnits(args.principalUsdc);
+  const grossPayoutUnits = usdcToUnits(args.grossPayoutUsdc);
   const fees = splitFees({
-    principalUnits: usdcToUnits(args.principalUsdc),
-    grossPayoutUnits: usdcToUnits(args.grossPayoutUsdc),
+    principalUnits,
+    grossPayoutUnits,
     outcome: args.outcome,
     snapshot: snapshotFeePolicy({
       platformFeeBps: args.platformFeeBps,
@@ -47,6 +60,15 @@ export function buildAgentDryRun(args: {
       sufficient: args.allowanceAtomic >= args.requiredAtomic,
       /** What `currentAtomic` measures, so a caller is not misled by the key name. */
       source: "spendable_usdc_balance",
+    },
+    sizing: {
+      policyVersion: STAKE_SIZING_POLICY_VERSION,
+      rounding: STAKE_SIZING_ROUNDING,
+      principalAtomic: principalUnits.toString(),
+      grossPayoutAtomic: grossPayoutUnits.toString(),
+      /** Remainder from the requested stake after atomic truncation (USDC input). */
+      principalRemainderUsdc: args.principalUsdc - unitsToUsdc(principalUnits),
+      grossPayoutRemainderUsdc: args.grossPayoutUsdc - unitsToUsdc(grossPayoutUnits),
     },
     payout: {
       principalUsdc: unitsToUsdc(fees.principalUnits),

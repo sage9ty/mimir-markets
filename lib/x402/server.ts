@@ -57,6 +57,7 @@ export function getResourceServer(): x402ResourceServer {
     .register(X402_NETWORK, new ExactStellarScheme())
     .onAfterSettle(async ({ result, requirements, paymentPayload, transportContext }) => {
       if (!result.success) return;
+      const extra = (result.extra ?? {}) as Record<string, unknown>;
       await recordPayment({
         resource: settledResource(transportContext, paymentPayload.resource?.url),
         scheme: requirements.scheme,
@@ -70,6 +71,9 @@ export function getResourceServer(): x402ResourceServer {
         paymentIdentifier: settlementIdentifier(result.transaction, paymentPayload.payload),
         facilitator: X402_SETTLEMENT_SOURCE(),
         settledAt: Date.now(),
+        observedAt: typeof extra.observedAt === "number" ? extra.observedAt : undefined,
+        policy: extra.policy as any,
+        explanation: typeof extra.explanation === "string" ? extra.explanation : undefined,
       });
     });
 

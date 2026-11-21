@@ -189,6 +189,20 @@ export interface SpendDecision {
  * Would this amount fit? Answers with the remaining allowance either way, because
  * "no" without a number is an agent that cannot decide whether to wait or to stop.
  */
+/**
+ * ── In-flight intents (#885) ─────────────────────────────────────────────
+ * `spentThisPeriodAtomic` must include the atomic stake of every copy
+ * execution intent still in `pending` or `unknown` state
+ * (`reservedSpendAtomic(intents)` in `lib/copy-trading`). The chain allowance
+ * is authoritative and will move once the submit lands, but the local period
+ * budget must reserve the stake the moment the intent is persisted —
+ * otherwise the same budget can authorise two submissions whose outcome is
+ * unknown, and only one of them can be real.
+ *
+ * The reservation is dropped when the intent reconciles to `confirmed`; the
+ * intent must NOT be added again on top of the confirmed spend, or the budget
+ * would count the same stake twice.
+ */
 export function evaluateSpend(args: {
   permission: SpendPermissionRecord;
   spentThisPeriodAtomic: bigint;

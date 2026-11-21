@@ -236,4 +236,15 @@ impl MimirSquad {
     pub fn get_paused_flag(env: Env) -> bool {
         storage::is_paused(&env)
     }
+
+    /// Read-only settlement readiness for a market. Never mutates state.
+    /// `withdrawal_open` is reported independently of `resolved`, so callers can
+    /// see whether pre-deadline withdrawals remain available. Unknown markets
+    /// return `MarketNotFound` rather than a partial view.
+    pub fn get_settlement_readiness(
+        env: Env,
+        market_id: u64,
+    ) -> Result<SettlementReadiness, Error> {
+        pool::settlement_readiness(&env, market_id)
+    }
 }

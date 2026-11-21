@@ -31,6 +31,11 @@ import {
   type VSData,
 } from "@/lib/contract";
 import { getExplorerTxUrl, waitForTransaction } from "@/lib/stellar";
+import {
+  challengeRecoveryTxHashFromError,
+  isChallengeRecoveryBlocking,
+} from "@/lib/challenge-recovery";
+import ChallengeRecoveryPanel from "@/components/vs/ChallengeRecoveryPanel";
 import { buildSeriesView } from "@/lib/series-view";
 import { openPeepsAvatar } from "@/lib/avatars";
 import { useVsDetail } from "@/hooks/useVsDetail";
@@ -175,7 +180,18 @@ export default function VSDetailPage() {
     setChallengeStake,
     resetChallengeStake,
     refresh: refreshVs,
+    challengeRecovery,
+    challengeRecoveryChecking,
+    beginChallengeRecovery,
+    checkChallengeRecovery,
+    dismissChallengeRecovery,
   } = useVsDetail({ vsId, address, inviteKey, isSampleVS });
+
+  /**
+   * While a signed challenge submission has an unobserved outcome, no second
+   * stake action may be presented — the first transaction may still land.
+   */
+  const challengeRecoveryBlocking = isChallengeRecoveryBlocking(challengeRecovery);
 
   /** Convenience: true during initial load (skeleton shown). */
   const loading = vsPhase === "loading";
@@ -685,6 +701,12 @@ export default function VSDetailPage() {
     if (!isConnected || !address) {
       return;
     }
+    // Fail closed: while a previous signed submission is unobserved, the stake
+    // action is not presented and must not run even if invoked directly.
+    if (challengeRecoveryBlocking) {
+      toast.error(t("stakeUncertainToast"));
+      return;
+    }
     if (!hasValidChallengeStake) {
       toast.error(t("invalidChallengeStakeMin", { amount: MIN_STAKE }));
       return;
@@ -762,9 +784,22 @@ export default function VSDetailPage() {
             }),
         txToastOptions(result)
       );
+      if (isPending && result.txHash) {
+        // The wallet saw the submission but the outcome is unobserved: record
+        // the tx identity so the recovery panel can run bounded status checks
+        // and no second stake is offered in the meantime.
+        beginChallengeRecovery({
+          txHash: result.txHash,
+          stakeAmount: challengeStakeValue,
+        });
+      } else if (!isPending) {
+        // A confirmed new stake supersedes any previously resolved record.
+        dismissChallengeRecovery();
+      }
       resetChallengeStake();
       fetchVS();
     } catch (err: any) {
+      const uncertainTxHash = challengeRecoveryTxHashFromError(err);
       track({
         event: "stake_failed",
         envelope: {
@@ -776,10 +811,22 @@ export default function VSDetailPage() {
           modifiers: canonicalMode.productModifiers,
           tx_status: "failed",
         },
-        properties: { failure_stage: "submit" },
+        properties: {
+          failure_stage: uncertainTxHash ? "submit_uncertain" : "submit",
+        },
         address,
       });
-      toast.error(err.message || t("errorAccepting"));
+      if (uncertainTxHash) {
+        // The submission carries a tx hash: it may have landed. Recovery checks
+        // the hash instead of inviting a blind resubmit.
+        beginChallengeRecovery({
+          txHash: uncertainTxHash,
+          stakeAmount: challengeStakeValue,
+        });
+        toast.error(t("stakeUncertainToast"));
+      } else {
+        toast.error(err.message || t("errorAccepting"));
+      }
     }
     });
   }
@@ -1401,12 +1448,27 @@ export default function VSDetailPage() {
                 </GlassCard>
               )}
 
+              {/* Uncertain challenge submission: show the tx identity and
+                  bounded status checks, and keep the stake action hidden until
+                  the first outcome is observed (or the record expires). */}
+              {challengeRecovery && (
+                <ChallengeRecoveryPanel
+                  record={challengeRecovery}
+                  explorerUrl={getExplorerTxUrl(challengeRecovery.txHash)}
+                  checking={challengeRecoveryChecking}
+                  onCheckStatus={() => void checkChallengeRecovery()}
+                  onDismiss={dismissChallengeRecovery}
+                />
+              )}
+
               {/* A brand-new Stellar account cannot hold USDC until it trusts the
                   issuer, so the first-ever stake needs this once. Renders nothing
                   for an account that is already set up. */}
-              {canAccept && <UsdcTrustlineGate trustline={trustline} />}
+              {canAccept && !challengeRecoveryBlocking && (
+                <UsdcTrustlineGate trustline={trustline} />
+              )}
 
-              {canAccept && (
+              {canAccept && !challengeRecoveryBlocking && (
                 <GlassCard glass className="!rounded-2xl border border-pv-ink/[0.12]">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,12rem)] sm:items-end">
                       <Input

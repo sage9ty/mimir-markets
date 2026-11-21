@@ -309,9 +309,29 @@ function canonicalize(pack: MarketContextPack): string {
     ],
     [...pack.resolution.edgeCases].sort(),
     source(pack.primarySource),
-    // Corroborating sources are sorted by URL for the same reason as entities.
+    // Corroborating sources are sorted by stable source identity (URL, then
+    // domain), capture metadata (capture time, then content hash, then publish
+    // time / timezone) and finally the remaining captured fields, so the digest
+    // never depends on the order in which asynchronous fetches happened to
+    // complete: the comparison is total, so no two distinct sources can tie.
     ...[...pack.corroboratingSources]
-      .sort((a, b) => a.url.localeCompare(b.url))
+      .sort((a, b) => {
+        const url = a.url.localeCompare(b.url);
+        if (url !== 0) return url;
+        const domain = a.domain.localeCompare(b.domain);
+        if (domain !== 0) return domain;
+        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+        const contentHash = a.contentHash.localeCompare(b.contentHash);
+        if (contentHash !== 0) return contentHash;
+        const publishedA = a.publishedAt ?? 0;
+        const publishedB = b.publishedAt ?? 0;
+        if (publishedA !== publishedB) return publishedA - publishedB;
+        const timezone = (a.sourceTimezone ?? "").localeCompare(b.sourceTimezone ?? "");
+        if (timezone !== 0) return timezone;
+        const trustTier = a.trustTier.localeCompare(b.trustTier);
+        if (trustTier !== 0) return trustTier;
+        return a.excerpt.localeCompare(b.excerpt);
+      })
       .map(source),
     [String(pack.confidenceBps)],
     [...pack.unresolvedQuestions].sort(),

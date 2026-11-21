@@ -60,6 +60,7 @@ const corpus = [
   ".gitignore",
   "README.md",
   "CHANGELOG.md",
+  "CONTRIBUTING.md",
   "LICENSE",
   "docs/STELLAR_NETWORK.md",
   // Fail-closed probes: no side may classify these as scoped or doc.

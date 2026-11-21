@@ -1,0 +1,954 @@
+{
+  "fixtureVersion": 1,
+  "apiSchemaVersion": 1,
+  "clockMs": 1755200000000,
+  "traceId": "mh_00000000000000000000000000000001",
+  "exchanges": [
+    {
+      "id": "market-read",
+      "description": "Unversioned public read retains the existing plain JSON response.",
+      "request": {
+        "method": "GET",
+        "path": "/api/vs/42",
+        "headers": {},
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "s-maxage=15, stale-while-revalidate=60"
+        },
+        "body": {
+          "item": {
+            "id": 42,
+            "creator": "GB7RICBT3KM36Z5VDUFC63BYHTVZXM6IQZMWJ3LRNSM5RM63TRTJARRK",
+            "opponent": "0x0000000000000000000000000000000000000000",
+            "question": "Will the synthetic observation exceed ten?",
+            "creator_position": "Above ten",
+            "opponent_position": "Ten or below",
+            "resolution_url": "https://example.com/fixture-observation",
+            "stake_amount": 2,
+            "deadline": 1755286400,
+            "state": "open",
+            "winner": "0x0000000000000000000000000000000000000000",
+            "resolution_summary": "",
+            "category": "custom"
+          },
+          "cache": {
+            "source": "index",
+            "status": "live",
+            "lastUpdatedAt": "2025-08-14T19:33:20.000Z",
+            "ageMs": 0,
+            "freshnessWindowMs": 15000
+          }
+        }
+      }
+    },
+    {
+      "id": "market-invalid-id",
+      "description": "Zero is outside the positive claim ID boundary.",
+      "request": {
+        "method": "GET",
+        "path": "/api/vs/0",
+        "headers": {},
+        "body": null
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "Invalid VS id",
+            "retryable": false,
+            "field": "id"
+          }
+        },
+        "headers": {}
+      }
+    },
+    {
+      "id": "market-not-found",
+      "description": "Missing and inaccessible claims return the same stable error.",
+      "request": {
+        "method": "GET",
+        "path": "/api/vs/99",
+        "headers": {},
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not_found",
+            "message": "VS not found",
+            "retryable": false
+          }
+        },
+        "headers": {}
+      }
+    },
+    {
+      "id": "heartbeat",
+      "description": "Complete synthetic signed envelope; authentication is faked only in tests.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-19\",\"nonce\":\"fixture-heartbeat-1\",\"signedAt\":1755200000000,\"body\":{},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "agentId": "fixture-agent",
+          "status": "active",
+          "at": 1755200000000
+        }
+      }
+    },
+    {
+      "id": "nonce-at-limit",
+      "description": "A 128-character nonce remains supported.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-128\",\"nonce\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\",\"signedAt\":1755200000000,\"body\":{},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "agentId": "fixture-agent",
+          "status": "active",
+          "at": 1755200000000
+        }
+      }
+    },
+    {
+      "id": "nonce-over-limit",
+      "description": "A 129-character nonce keeps the existing message-only 400 response.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-128\",\"nonce\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\",\"signedAt\":1755200000000,\"body\":{},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "error": {
+            "message": "invalid nonce"
+          }
+        }
+      }
+    },
+    {
+      "id": "write-version-unsupported",
+      "description": "Unsupported envelope version keeps the existing rejection.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v2\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-19\",\"nonce\":\"fixture-heartbeat-1\",\"signedAt\":1755200000000,\"body\":{},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "error": {
+            "message": "unsupported version"
+          }
+        }
+      }
+    },
+    {
+      "id": "write-extra-field",
+      "description": "The route rejects unexpected top-level fields after shape checking.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-19\",\"nonce\":\"fixture-heartbeat-1\",\"signedAt\":1755200000000,\"body\":{},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\",\"extra\":true}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "error": {
+            "message": "unexpected fields in request",
+            "details": [
+              "extra"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "write-body-not-object",
+      "description": "The existing shape helper rejects an array body.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"heartbeat\",\"idempotencyKey\":\"fixture-heartbeat-19\",\"nonce\":\"fixture-heartbeat-1\",\"signedAt\":1755200000000,\"body\":[],\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "error": {
+            "message": "schema validation failed",
+            "details": [
+              "body must be a object"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "write-invalid-json",
+      "description": "Malformed JSON retains a message-only failure.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/heartbeat",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "error": {
+            "message": "invalid JSON"
+          }
+        }
+      }
+    },
+    {
+      "id": "dry-run-exact-balance",
+      "description": "Fake spendable balance compared with the required stake in integer atomic USDC; no transaction is sent.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/dryRun",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"dryRun\",\"idempotencyKey\":\"fixture-dryRun-17\",\"nonce\":\"fixture-dry-run-1\",\"signedAt\":1755200000000,\"body\":{\"principalUsdc\":2,\"grossPayoutUsdc\":4,\"stakeUsdc\":2},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "allowed": true,
+          "policy": {
+            "allowed": true
+          },
+          "allowance": {
+            "currentAtomic": "20000000",
+            "requiredAtomic": "20000000",
+            "sufficient": true,
+            "source": "spendable_usdc_balance"
+          },
+          "payout": {
+            "principalUsdc": 2,
+            "grossProfitUsdc": 2,
+            "platformFeeUsdc": 0,
+            "agentOwnerFeeUsdc": 0,
+            "totalReturnUsdc": 4
+          }
+        }
+      },
+      "spendableAtomic": "20000000"
+    },
+    {
+      "id": "dry-run-one-atomic-short",
+      "description": "Fake spendable balance compared with the required stake in integer atomic USDC; no transaction is sent.",
+      "request": {
+        "method": "POST",
+        "path": "/api/agents/v1/dryRun",
+        "headers": {
+          "content-type": "application/json",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": "{\"version\":\"v1\",\"agentId\":\"fixture-agent\",\"action\":\"dryRun\",\"idempotencyKey\":\"fixture-dryRun-17\",\"nonce\":\"fixture-dry-run-1\",\"signedAt\":1755200000000,\"body\":{\"principalUsdc\":2,\"grossPayoutUsdc\":4,\"stakeUsdc\":2},\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "x-mimir-schema-version": "1",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        },
+        "body": {
+          "allowed": false,
+          "policy": {
+            "allowed": true
+          },
+          "allowance": {
+            "currentAtomic": "19999999",
+            "requiredAtomic": "20000000",
+            "sufficient": false,
+            "source": "spendable_usdc_balance"
+          },
+          "payout": {
+            "principalUsdc": 2,
+            "grossProfitUsdc": 2,
+            "platformFeeUsdc": 0,
+            "agentOwnerFeeUsdc": 0,
+            "totalReturnUsdc": 4
+          }
+        }
+      },
+      "spendableAtomic": "19999999"
+    }
+  ],
+  "schemaVersions": [
+    {
+      "id": "read-no-version",
+      "raw": null,
+      "mutating": false,
+      "verdict": {
+        "ok": true,
+        "version": 1
+      }
+    },
+    {
+      "id": "write-no-version",
+      "raw": null,
+      "mutating": true,
+      "verdict": {
+        "ok": false,
+        "reason": "version_required",
+        "detail": "x-mimir-schema-version is required for this operation"
+      }
+    },
+    {
+      "id": "read-current",
+      "raw": "1",
+      "mutating": false,
+      "verdict": {
+        "ok": true,
+        "version": 1
+      }
+    },
+    {
+      "id": "write-current",
+      "raw": "1",
+      "mutating": true,
+      "verdict": {
+        "ok": true,
+        "version": 1
+      }
+    },
+    {
+      "id": "write-whitespace",
+      "raw": " 1 ",
+      "mutating": true,
+      "verdict": {
+        "ok": true,
+        "version": 1
+      }
+    },
+    {
+      "id": "read-leading-zero",
+      "raw": "01",
+      "mutating": false,
+      "verdict": {
+        "ok": true,
+        "version": 1
+      }
+    },
+    {
+      "id": "read-newer-version",
+      "raw": "2",
+      "mutating": false,
+      "verdict": {
+        "ok": false,
+        "reason": "unsupported_version",
+        "detail": "server speaks 1, client sent 2"
+      }
+    },
+    {
+      "id": "read-older-version",
+      "raw": "0",
+      "mutating": false,
+      "verdict": {
+        "ok": false,
+        "reason": "unsupported_version",
+        "detail": "server speaks 1, client sent 0"
+      }
+    },
+    {
+      "id": "read-malformed",
+      "raw": "1abc",
+      "mutating": false,
+      "verdict": {
+        "ok": false,
+        "reason": "malformed_version",
+        "detail": "1abc"
+      }
+    },
+    {
+      "id": "write-empty-version",
+      "raw": " ",
+      "mutating": true,
+      "verdict": {
+        "ok": false,
+        "reason": "version_required",
+        "detail": "x-mimir-schema-version is required for this operation"
+      }
+    }
+  ],
+  "envelopeCases": [
+    {
+      "id": "signed-fresh",
+      "now": 1755200000000,
+      "request": {
+        "version": "v1",
+        "agentId": "fixture-agent",
+        "action": "heartbeat",
+        "idempotencyKey": "fixture-heartbeat-19",
+        "nonce": "fixture-heartbeat-1",
+        "signedAt": 1755200000000,
+        "body": {},
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "errors": []
+    },
+    {
+      "id": "signed-skew-at-limit",
+      "now": 1755200300000,
+      "request": {
+        "version": "v1",
+        "agentId": "fixture-agent",
+        "action": "heartbeat",
+        "idempotencyKey": "fixture-heartbeat-19",
+        "nonce": "fixture-heartbeat-1",
+        "signedAt": 1755200000000,
+        "body": {},
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "errors": []
+    },
+    {
+      "id": "signed-skew-over-limit",
+      "now": 1755200300001,
+      "request": {
+        "version": "v1",
+        "agentId": "fixture-agent",
+        "action": "heartbeat",
+        "idempotencyKey": "fixture-heartbeat-19",
+        "nonce": "fixture-heartbeat-1",
+        "signedAt": 1755200000000,
+        "body": {},
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "errors": [
+        "signed timestamp outside allowed window"
+      ]
+    },
+    {
+      "id": "signed-future-at-limit",
+      "now": 1755199700000,
+      "request": {
+        "version": "v1",
+        "agentId": "fixture-agent",
+        "action": "heartbeat",
+        "idempotencyKey": "fixture-heartbeat-19",
+        "nonce": "fixture-heartbeat-1",
+        "signedAt": 1755200000000,
+        "body": {},
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "errors": []
+    },
+    {
+      "id": "signed-future-over-limit",
+      "now": 1755199699999,
+      "request": {
+        "version": "v1",
+        "agentId": "fixture-agent",
+        "action": "heartbeat",
+        "idempotencyKey": "fixture-heartbeat-19",
+        "nonce": "fixture-heartbeat-1",
+        "signedAt": 1755200000000,
+        "body": {},
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "errors": [
+        "signed timestamp outside allowed window"
+      ]
+    }
+  ],
+  "errorCatalogue": [
+    {
+      "code": "invalid_request",
+      "status": 400,
+      "retryable": false,
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "Fixture: invalid_request",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "invalid_signature",
+      "status": 400,
+      "retryable": false,
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "invalid_signature",
+            "message": "Fixture: invalid_signature",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "unsupported_version",
+      "status": 400,
+      "retryable": false,
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "unsupported_version",
+            "message": "Fixture: unsupported_version",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "payload_too_large",
+      "status": 413,
+      "retryable": false,
+      "response": {
+        "status": 413,
+        "body": {
+          "error": {
+            "code": "payload_too_large",
+            "message": "Fixture: payload_too_large",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "idempotency_conflict",
+      "status": 409,
+      "retryable": false,
+      "response": {
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "idempotency_conflict",
+            "message": "Fixture: idempotency_conflict",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "unauthenticated",
+      "status": 401,
+      "retryable": false,
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "unauthenticated",
+            "message": "Fixture: unauthenticated",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "nonce_reused",
+      "status": 401,
+      "retryable": false,
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "nonce_reused",
+            "message": "Fixture: nonce_reused",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "request_expired",
+      "status": 401,
+      "retryable": true,
+      "retryAfterSeconds": 0,
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "request_expired",
+            "message": "Fixture: request_expired",
+            "retryable": true,
+            "retryAfterSeconds": 0,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "forbidden",
+      "status": 403,
+      "retryable": false,
+      "response": {
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "forbidden",
+            "message": "Fixture: forbidden",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "capability_missing",
+      "status": 403,
+      "retryable": false,
+      "response": {
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "capability_missing",
+            "message": "Fixture: capability_missing",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "agent_revoked",
+      "status": 403,
+      "retryable": false,
+      "response": {
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "agent_revoked",
+            "message": "Fixture: agent_revoked",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "agent_paused",
+      "status": 403,
+      "retryable": true,
+      "retryAfterSeconds": 300,
+      "response": {
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "agent_paused",
+            "message": "Fixture: agent_paused",
+            "retryable": true,
+            "retryAfterSeconds": 300,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "300",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "not_found",
+      "status": 404,
+      "retryable": false,
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not_found",
+            "message": "Fixture: not_found",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "conflict",
+      "status": 409,
+      "retryable": false,
+      "response": {
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "conflict",
+            "message": "Fixture: conflict",
+            "retryable": false,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "rate_limited",
+      "status": 429,
+      "retryable": true,
+      "retryAfterSeconds": 60,
+      "response": {
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Fixture: rate_limited",
+            "retryable": true,
+            "retryAfterSeconds": 60,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "60",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "budget_exhausted",
+      "status": 429,
+      "retryable": true,
+      "retryAfterSeconds": 3600,
+      "response": {
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "budget_exhausted",
+            "message": "Fixture: budget_exhausted",
+            "retryable": true,
+            "retryAfterSeconds": 3600,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "3600",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "upstream_unavailable",
+      "status": 503,
+      "retryable": true,
+      "retryAfterSeconds": 30,
+      "response": {
+        "status": 503,
+        "body": {
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "Fixture: upstream_unavailable",
+            "retryable": true,
+            "retryAfterSeconds": 30,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "30",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "internal_error",
+      "status": 500,
+      "retryable": true,
+      "retryAfterSeconds": 5,
+      "response": {
+        "status": 500,
+        "body": {
+          "error": {
+            "code": "internal_error",
+            "message": "Fixture: internal_error",
+            "retryable": true,
+            "retryAfterSeconds": 5,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "5",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    }
+  ],
+  "retryOverrides": [
+    {
+      "code": "rate_limited",
+      "retryAfterSeconds": 0,
+      "response": {
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Fixture: rate_limited",
+            "retryable": true,
+            "retryAfterSeconds": 0,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "code": "rate_limited",
+      "retryAfterSeconds": 2.2,
+      "response": {
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Fixture: rate_limited",
+            "retryable": true,
+            "retryAfterSeconds": 2.2,
+            "trace_id": "mh_00000000000000000000000000000001"
+          }
+        },
+        "headers": {
+          "retry-after": "3",
+          "x-mimir-trace-id": "mh_00000000000000000000000000000001"
+        }
+      }
+    }
+  ],
+  "signingExample": {
+    "request": {
+      "version": "v1",
+      "agentId": "fixture-agent",
+      "action": "heartbeat",
+      "idempotencyKey": "fixture-heartbeat-19",
+      "nonce": "fixture-heartbeat-1",
+      "signedAt": 1755200000000,
+      "body": {},
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    "message": "Mimir Agent API request\nversion: v1\nagent: fixture-agent\naction: heartbeat\nidempotency: fixture-heartbeat-19\nnonce: fixture-heartbeat-1\nsignedAt: 1755200000000\nbodyHash: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  }
+}

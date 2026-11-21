@@ -25,7 +25,7 @@ function payload() {
       marketState: "open",
     },
     context: {
-      usage: { usedTodayUsdc: 0, usedThisWeekUsdc: 0, openExposureUsdc: 0, realizedLossAtomic: "0" },
+      usage: { usedTodayUsdc: 0, usedThisWeekUsdc: 0, openExposureUsdc: 0, realizedLossAtomic: "0", principalAtRiskAtomic: "0" },
       existingClaimIds: [], ancestryAgentIds: ["agent-a"], configuredUsdc: USDC,
       configuredSpender: MIMIR, onchainAllowanceAtomic: "100000000",
     },

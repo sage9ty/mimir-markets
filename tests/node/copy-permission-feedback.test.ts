@@ -304,3 +304,36 @@ test("boundary: exact allowance equality and case-sensitive address verification
   });
   assert.equal(lowercasedMatch.status, "disconnected");
 });
+
+test("principal-at-risk is exposed separately from realized loss in feedback view", () => {
+  const p = makePermission();
+
+  // When principalAtRiskAtomic is supplied, it appears in the view.
+  const withOpenPrincipal = buildCopyPermissionFeedback({
+    permission: p,
+    connectedWallet: OWNER,
+    onchainAllowanceAtomic: 100n * UNIT,
+    onchainBalanceAtomic: 200n * UNIT,
+    principalAtRiskAtomic: 7n * UNIT,
+    configuredUsdc: USDC,
+    configuredSpender: MIMIR,
+    now: NOW,
+  });
+  assert.equal(withOpenPrincipal.status, "ready");
+  assert.equal(withOpenPrincipal.principalAtRiskAtomic, (7n * UNIT).toString());
+  // maxRealizedLossAtomic comes from the permission record, not a stale display-unit field.
+  assert.equal(withOpenPrincipal.maxRealizedLossAtomic, p.maxRealizedLossAtomic);
+
+  // When principalAtRiskAtomic is omitted, the field is null — not fabricated.
+  const withoutOpenPrincipal = buildCopyPermissionFeedback({
+    permission: p,
+    connectedWallet: OWNER,
+    onchainAllowanceAtomic: 100n * UNIT,
+    configuredUsdc: USDC,
+    configuredSpender: MIMIR,
+    now: NOW,
+  });
+  assert.equal(withoutOpenPrincipal.principalAtRiskAtomic, null);
+  // signedAllowanceAtomic is set from the actual spendPermission allowance.
+  assert.equal(withoutOpenPrincipal.signedAllowanceAtomic, (100n * UNIT).toString());
+});

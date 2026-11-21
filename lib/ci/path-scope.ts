@@ -101,6 +101,7 @@ export const DOC_ONLY: ReadonlySet<string> = new Set([
   "LICENSE",
   "README.md",
   "CHANGELOG.md",
+  "CONTRIBUTING.md",
 ]);
 
 /**

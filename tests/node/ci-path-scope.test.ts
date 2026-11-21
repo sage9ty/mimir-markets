@@ -83,7 +83,7 @@ test("root manifests fan out to every tier that claims them", () => {
 });
 
 test("doc-only changes enable nothing but never fail the path job", () => {
-  for (const doc of ["README.md", "CHANGELOG.md", "LICENSE", "docs/STELLAR_NETWORK.md", "docs/ops/runbook.md"]) {
+  for (const doc of ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "docs/STELLAR_NETWORK.md", "docs/ops/runbook.md"]) {
     const scope = scopesForPaths([doc]);
     assert.equal(scope.kind, "doc", `${doc} must classify as doc`);
   }

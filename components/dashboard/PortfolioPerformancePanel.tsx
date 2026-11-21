@@ -120,6 +120,7 @@ export default function PortfolioPerformancePanel({
             label={t("portfolioPerformanceChartLabel")}
             emptyMessage={t("portfolioPerformanceEmpty")}
             invalidMessage={t("portfolioPerformanceInvalid")}
+            keyboardNavigation
           />
         </>
       ) : null}

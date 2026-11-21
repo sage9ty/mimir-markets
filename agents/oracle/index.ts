@@ -201,6 +201,81 @@ const ORACLE        = getOracleWallet();
 const ORACLE_ADDR   = ORACLE.address;
 const ORACLE_PAYER  = payingWalletFor(ORACLE);
 
+// ── Durable settlement intents ───────────────────────────────────────────────
+// Each settlement is recorded as an intent BEFORE the transaction is signed, so
+// an uncertain submission (timeout, lost response) is reconciled against chain
+// state on restart rather than blindly re-signed. The verdict and evidence are
+// bound together by a canonical digest; a mismatched digest on reconcile means
+// the intent is stale and must not be reused.
+export interface SettlementIntent {
+  claimId: number;
+  verdictDigest: string;
+  evidenceHash: string;
+  status: "pending" | "submitted" | "confirmed" | "abandoned";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function canonicalVerdictDigest(
+  claimId: number,
+  payload: { winner_side: string; summary: string; confidence: number; evidence_hash: string },
+): string {
+  const canonical = JSON.stringify([
+    claimId,
+    payload.winner_side,
+    payload.summary,
+    payload.confidence,
+    payload.evidence_hash,
+  ]);
+  return evidenceCommitmentHash(canonical);
+}
+
+export interface IntentStore {
+  get(claimId: number): Promise<SettlementIntent | null>;
+  put(intent: SettlementIntent): Promise<void>;
+}
+
+export function createFileIntentStore(dir: string): IntentStore {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require("node:fs") as typeof import("node:fs");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require("node:path") as typeof import("node:path");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = (id: number) => path.join(dir, `intent-${id}.json`);
+  return {
+    async get(claimId) {
+      try {
+        return JSON.parse(fs.readFileSync(file(claimId), "utf8")) as SettlementIntent;
+      } catch {
+        return null;
+      }
+    },
+    async put(intent) {
+      const target = file(intent.claimId);
+      const tmp = `${target}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(intent), "utf8");
+      fs.renameSync(tmp, target);
+    },
+  };
+}
+
+/**
+ * Decide whether a settlement may proceed given any prior intent.
+ * - No intent, or abandoned: proceed with a fresh intent.
+ * - Confirmed: never re-settle (chain is authoritative; treat as done).
+ * - Pending/submitted: must reconcile against chain before any new action.
+ */
+export type IntentDecision =
+  | { action: "proceed" }
+  | { action: "skip_confirmed" }
+  | { action: "reconcile"; intent: SettlementIntent };
+
+export function decideIntent(prior: SettlementIntent | null): IntentDecision {
+  if (!prior || prior.status === "abandoned") return { action: "proceed" };
+  if (prior.status === "confirmed") return { action: "skip_confirmed" };
+  return { action: "reconcile", intent: prior };
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ClaimOnChain = ClaimData;
 

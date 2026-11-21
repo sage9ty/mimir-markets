@@ -16,6 +16,7 @@ lib/usdc.ts	Circle Testnet USDC: Stellar Asset Contract id, issuer, 7-decimal he
 lib/contract.ts	TypeScript contract client (reads + writes through the generated bindings)
 lib/wallet.tsx	Wallet context (Stellar Wallets Kit: Freighter, xBull, Albedo, Lobstr, Hana)
 lib/wallet-connectors.ts	Connector list and per-wallet capability matrix
+lib/wallet-signing-coordinator.ts	Cross-tab wallet signing lease & uncertain-recovery coordinator
 lib/stellar-message.ts	SEP-43 signMessage verification (Ed25519, base64)
 lib/content-hash.ts	SHA-256 content hashing — the hash Soroban's host exposes
 lib/agent-wallets.ts	Local Stellar keypairs for oracle / creator / council
@@ -37,6 +38,7 @@ lib/ops/dependency-audit.ts	Fail-closed npm audit triage (production high/critic
 lib/server/read-index-backup.ts	DB-backed read-index dump / verified restore (restore fingerprint check)
 scripts/verify-artifact-provenance.ts	CLI: verify or --write-pins contract artifacts
 scripts/verify-cache-backup.ts	CLI: offline cache-backup verification (npm run verify:cache-backup)
+scripts/verify-package-scripts.ts	CLI: verify package.json script contract against disk targets and CI/CONTRIBUTING docs (npm run verify:package-scripts)
 scripts/check-npm-audit.ts	CLI: triage npm audit --json (npm run audit:deps, no production secrets)
 scripts/backup-read-index.ts	CLI: dump the Neon read-index to a self-verified archive
 scripts/restore-read-index.ts	CLI: restore a verified archive and fingerprint-check the cache
@@ -64,6 +66,7 @@ environment behavior.
 | `lib/contract.ts` | TypeScript contract client (reads + writes through the generated bindings) |
 | `lib/wallet.tsx` | Wallet context (Stellar Wallets Kit: Freighter, xBull, Albedo, Lobstr, Hana) |
 | `lib/wallet-connectors.ts` | Connector list and per-wallet capability matrix |
+| `lib/wallet-signing-coordinator.ts` | Cross-tab wallet signing lease & uncertain-recovery coordinator |
 | `lib/stellar-message.ts` | SEP-43 `signMessage` verification (Ed25519, base64) |
 | `lib/content-hash.ts` | SHA-256 content hashing — the hash Soroban's host exposes |
 | `lib/agent-wallets.ts` | Local Stellar keypairs for oracle / creator / council |
@@ -81,9 +84,11 @@ environment behavior.
 | `deploy/contract-artifacts.manifest.json` | Pinned Wasm digests for fail-closed provenance checks |
 | `lib/ops/artifact-provenance.ts` | Offline SHA-256 artifact provenance verifier |
 | `lib/ops/cache-backup.ts` | Offline read-index cache-backup verifier (checksum + privacy, no network) |
+| `lib/ops/package-script-contract.ts` | Offline `package.json` script contract verifier against disk targets, argument forwarding, and CI/CONTRIBUTING refs |
 | `lib/server/read-index-backup.ts` | DB-backed read-index dump / verified restore (restore fingerprint check) |
 | `scripts/verify-artifact-provenance.ts` | CLI: verify or `--write-pins` contract artifacts |
 | `scripts/verify-cache-backup.ts` | CLI: offline cache-backup verification (`npm run verify:cache-backup`) |
+| `scripts/verify-package-scripts.ts` | CLI: offline `package.json` script contract verification (`npm run verify:package-scripts`) |
 | `scripts/backup-read-index.ts` | CLI: dump the Neon read-index to a self-verified archive |
 | `scripts/restore-read-index.ts` | CLI: restore a verified archive and fingerprint-check the cache |
 | `scripts/stellar-keys.ts` | Keypairs + Friendbot funding + USDC trustline |
@@ -435,3 +440,12 @@ that change reviewable:
 - Every new table or index must ship with a `schema_migrations` registration; a
   schema with no registered migration fails `MIGRATION_UNREGISTERED`.
 - Policy: [`docs/SCHEMA_SNAPSHOTS.md`](./SCHEMA_SNAPSHOTS.md).
+
+## Cross-tab wallet signing coordinator (`lib/wallet-signing-coordinator.ts`)
+
+`lib/wallet-signing-coordinator.ts` coordinates wallet signing ownership across open browser tabs and within the same tab for `signTransaction`, `signAuthEntry`, `signMessage` (`lib/wallet.tsx`), and `ensureUsdcTrustline` (`lib/stellar-trustline.ts`).
+
+- **Nonsecret operation identity**: Persisted storage (`mimir:wallet-signing-coordinator:v1`) and cross-tab `BroadcastChannel` payloads store only public metadata: `operationId`, normalized public `account`, `tabId`, `operationKind` (`"sign_transaction" | "sign_auth_entry" | "sign_message" | "enable_trustline"`), `status` (`"active" | "uncertain_recovery"`), `acquiredAt`, `heartbeatAt`, `expiresAt`, and optional recovery metadata (`uncertainAt`, `recoveryReason`). Unsigned/signed XDR, secret seeds, auth tokens, messages, and private notes are never stored.
+- **Same-account mutual exclusion**: Only one active signing operation is allowed per normalized Stellar account at a time across tabs (`active_in_other_tab` / `active_in_same_tab`), while independent accounts can sign concurrently and sequential prompts proceed immediately after `release()`.
+- **Heartbeat & bounded `uncertain_recovery`**: Active leases refresh via heartbeat (`heartbeat()` / 5 s interval, 30 s default TTL). If an owning tab unloads (`pagehide` / `beforeunload`) without releasing or its lease expires (`now > expiresAt`), the record transitions to bounded `status: "uncertain_recovery"` (capped by `maxRecords` and `recoveryRetentionMs`) instead of silently stealing ownership. Subsequent prompts for that account remain blocked until the user explicitly acknowledges recovery via `acknowledgeUncertainRecovery` / `dismissSigningRecovery` or opts into retry (`acknowledgeUncertainRecovery: true`).
+- **Injectable test boundary & React integration**: `createWalletSigningCoordinator({ storage, channel, events, now, ... })` injects storage, channels, lifecycle events, and clock deterministically for Node tests without browser globals. `WalletProvider` (`lib/wallet.tsx`) wraps `signTransaction`, `signAuthEntry`, and `signMessage` and exposes non-breaking optional fields on `WalletContextValue` (`signingOwnership`, `signingBlockedByOtherTab`, `signingRecovery`, `acknowledgeSigningRecovery`, `dismissSigningRecovery`, `retryAfterSigningRecovery`). `ensureUsdcTrustline` (`lib/stellar-trustline.ts`) acquires an `"enable_trustline"` lease and unwraps the underlying signer via `resolveUncoordinatedSignTransaction` so it never self-deadlocks against `WalletProvider.signTransaction`.

@@ -64,6 +64,22 @@ fn oracle_rotation_execution_is_permissionless_after_timelock() {
 }
 
 #[test]
+fn settlement_readiness_reports_unmet_prerequisites_without_mutation() {
+    let f = Fixture::new();
+    let captain = f.user(0);
+    let participant = f.user(USDC);
+    let id = f.market(&captain, 0);
+    f.client().deposit(&participant, &id, &SIDE_A, &USDC);
+
+    let before = f.client().get_market(&id);
+    let ready = f.client().settlement_readiness(&id);
+    assert!(!ready.resolved);
+    assert!(!ready.oracle_ready);
+    assert_eq!(f.client().get_market(&id), before);
+    assert!(f.client().get_pending_oracle().is_none());
+}
+
+#[test]
 fn executing_or_cancelling_without_a_queued_oracle_is_rejected() {
     let f = Fixture::new();
 

@@ -4,16 +4,82 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
-import { useWallet } from "@/lib/wallet";
+import {
+  WALLET_SIGNING_OPERATION_MESSAGE_KEYS,
+  useWallet,
+} from "@/lib/wallet";
 import { shortenAddress } from "@/lib/constants";
 import { getExplorerAddressUrl } from "@/lib/stellar";
 import { Copy, ExternalLink, LogOut, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { isXmtpFeatureEnabled } from "@/lib/xmtp/config";
+import type { WalletSigningOperationRecord } from "@/lib/wallet-signing-coordinator";
+
+function SigningRecoveryNotice({
+  record,
+  onAcknowledge,
+  variant = "menu",
+}: {
+  record: WalletSigningOperationRecord;
+  onAcknowledge: (operationId?: string) => void;
+  variant?: "menu" | "banner";
+}) {
+  const tWallet = useTranslations("wallet");
+  const hint = tWallet("signingRecoveryHint", {
+    operation: tWallet(WALLET_SIGNING_OPERATION_MESSAGE_KEYS[record.operationKind]),
+  });
+
+  if (variant === "banner") {
+    return (
+      <div className="mx-auto mt-2 max-w-[1200px] px-4 sm:px-6 lg:px-8">
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-pv-surface/95 px-4 py-3 text-[12px] shadow-[0_12px_36px_-14px_rgba(251,191,36,0.25)] backdrop-blur-xl"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+              {tWallet("signingRecoveryTitle")}
+            </p>
+            <p className="mt-0.5 leading-relaxed text-pv-muted">{hint}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onAcknowledge(record.operationId)}
+            className="btn-compact-primary shrink-0 px-3.5 py-1.5 text-[12px]"
+          >
+            {tWallet("signingRecoveryAcknowledge")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="alert"
+      className="mb-1 rounded-xl border border-amber-400/35 bg-amber-400/[0.08] px-3.5 py-2.5 text-[12px] leading-relaxed text-pv-text"
+    >
+      <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+        {tWallet("signingRecoveryTitle")}
+      </p>
+      <p className="mt-1 text-pv-muted">{hint}</p>
+      <button
+        type="button"
+        onClick={() => onAcknowledge(record.operationId)}
+        className="btn-compact-primary mt-2.5 px-3 py-1 text-[11px]"
+      >
+        {tWallet("signingRecoveryAcknowledge")}
+      </button>
+    </div>
+  );
+}
 
 function WalletAccountMenu({
   address,
   networkWarning,
+  signingBlockedByOtherTab,
+  signingRecovery,
+  onAcknowledgeSigningRecovery,
   open,
   onOpenChange,
   onDisconnect,
@@ -32,6 +98,9 @@ function WalletAccountMenu({
    * place this belongs.
    */
   networkWarning: string | null;
+  signingBlockedByOtherTab: boolean;
+  signingRecovery: WalletSigningOperationRecord | null;
+  onAcknowledgeSigningRecovery: (operationId?: string) => void;
   open: boolean;
   onOpenChange: (next: boolean) => void;
   onDisconnect: () => void;
@@ -39,6 +108,7 @@ function WalletAccountMenu({
   buttonClassName: string;
 }) {
   const t = useTranslations("header");
+  const tWallet = useTranslations("wallet");
   const [copied, setCopied] = useState(false);
   const explorerHref = getExplorerAddressUrl(address);
 
@@ -101,6 +171,25 @@ function WalletAccountMenu({
               </p>
             ) : null}
 
+            {signingRecovery ? (
+              <SigningRecoveryNotice
+                record={signingRecovery}
+                onAcknowledge={onAcknowledgeSigningRecovery}
+                variant="menu"
+              />
+            ) : signingBlockedByOtherTab ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mb-1 rounded-xl border border-amber-400/35 bg-amber-400/[0.06] px-3.5 py-2.5 text-[12px] leading-relaxed text-pv-muted"
+              >
+                <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                  {tWallet("signingActiveOtherTabTitle")}
+                </p>
+                <p className="mt-1">{tWallet("signingActiveOtherTabHint")}</p>
+              </div>
+            ) : null}
+
             <button
               type="button"
               role="menuitem"
@@ -145,8 +234,17 @@ function WalletAccountMenu({
 }
 
 export default function Header() {
-  const { address, isConnected, isConnecting, connect, disconnect, networkWarning } =
-    useWallet();
+  const {
+    address,
+    isConnected,
+    isConnecting,
+    connect,
+    disconnect,
+    networkWarning,
+    signingBlockedByOtherTab = false,
+    signingRecovery = null,
+    acknowledgeSigningRecovery,
+  } = useWallet();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
@@ -289,6 +387,11 @@ export default function Header() {
                 <WalletAccountMenu
                   address={address}
                   networkWarning={networkWarning}
+                  signingBlockedByOtherTab={signingBlockedByOtherTab}
+                  signingRecovery={signingRecovery}
+                  onAcknowledgeSigningRecovery={(opId) => {
+                    acknowledgeSigningRecovery?.(opId);
+                  }}
                   open={walletMenuOpen}
                   onOpenChange={setWalletMenuOpen}
                   onDisconnect={disconnect}
@@ -315,6 +418,11 @@ export default function Header() {
                 <WalletAccountMenu
                   address={address}
                   networkWarning={networkWarning}
+                  signingBlockedByOtherTab={signingBlockedByOtherTab}
+                  signingRecovery={signingRecovery}
+                  onAcknowledgeSigningRecovery={(opId) => {
+                    acknowledgeSigningRecovery?.(opId);
+                  }}
                   open={walletMenuOpen}
                   onOpenChange={setWalletMenuOpen}
                   onDisconnect={disconnect}
@@ -346,6 +454,16 @@ export default function Header() {
         )}
       </div>
       </div>
+
+      {!isPresentationHome && isConnected && address && signingRecovery ? (
+        <SigningRecoveryNotice
+          record={signingRecovery}
+          onAcknowledge={(opId) => {
+            acknowledgeSigningRecovery?.(opId);
+          }}
+          variant="banner"
+        />
+      ) : null}
 
       {/* Mobile sheet */}
       <AnimatePresence>

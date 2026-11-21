@@ -11,7 +11,11 @@
 import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
 
-import { ExactStellarFacilitator } from "../../lib/x402/stellar-scheme";
+import {
+  ExactStellarFacilitator,
+  X402_FRESHNESS_POLICY_VERSION,
+  defaultFreshnessPolicy,
+} from "../../lib/x402/stellar-scheme";
 import type { StellarHorizonReader } from "../../lib/x402/stellar-scheme";
 import { X402_NETWORK } from "../../lib/x402/config";
 import {
@@ -410,4 +414,92 @@ test("200 concurrent, distinct verifications all read their own payment", async 
   assert.equal(stats.txReads, 200);
   assert.equal(stats.opsReads, 200);
   assert.equal(stats.consumedAfter, 200);
+});
+
+// ── Freshness policy versioning & explanation ─────────────────────────────────
+
+test("successful verification returns applied policy, observation time, and explanation", async () => {
+  const { payment, backend } = ready();
+  const requirements = makeRequirements();
+  const proof = signedProof(payment.transaction, requirements);
+  const result = await verifyWithBackend(proof, requirements, backend, {
+    maxAgeMs: MAX_AGE_MS,
+    now: NOW,
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.observedAt, NOW);
+  assert.deepEqual(result.policy, {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: MAX_AGE_MS,
+  });
+  assert.ok(result.explanation);
+  assert.ok(result.explanation.includes(X402_FRESHNESS_POLICY_VERSION));
+  assert.ok(result.explanation.includes("is within window"));
+});
+
+test("ExactStellarFacilitator verify and settle propagate policy, observedAt, and explanation in extra", async () => {
+  const { payment } = ready();
+  const backend = fakeHorizonBackend([payment]);
+  const requirements = makeRequirements();
+  const payload = toPaymentPayload(
+    signedProof(payment.transaction, requirements),
+    requirements,
+  );
+  const facilitator = new ExactStellarFacilitator(backend);
+
+  const verified = await facilitator.verify(payload, requirements);
+  assert.equal(verified.isValid, true);
+  assert.ok(verified.extra);
+  assert.equal(typeof verified.extra.observedAt, "number");
+  assert.deepEqual(verified.extra.policy, {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: MAX_AGE_MS,
+  });
+  assert.ok(typeof verified.extra.explanation === "string");
+
+  const settled = await facilitator.settle(payload, requirements);
+  assert.equal(settled.success, true);
+  assert.ok(settled.extra);
+  assert.equal(typeof settled.extra.observedAt, "number");
+  assert.deepEqual(settled.extra.policy, {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: MAX_AGE_MS,
+  });
+  assert.ok(typeof settled.extra.explanation === "string");
+  assert.ok(settled.extra.explanation.includes("is within window"));
+});
+
+test("verification failure on payment_too_old includes observedAt, policy, and failure explanation", async () => {
+  const { backend } = ready({ createdAtMs: NOW - MAX_AGE_MS - 5_000 });
+  const requirements = makeRequirements();
+  const proof = signedProof(backend.records.values().next().value!.transaction, requirements);
+  const result = await verifyWithBackend(proof, requirements, backend, {
+    maxAgeMs: MAX_AGE_MS,
+    now: NOW,
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.reason, "payment_too_old");
+  assert.equal(result.observedAt, NOW);
+  assert.deepEqual(result.policy, {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: MAX_AGE_MS,
+  });
+  assert.ok(result.explanation);
+  assert.ok(result.explanation.includes("exceeds window"));
+  assert.ok(result.explanation.includes(X402_FRESHNESS_POLICY_VERSION));
+});
+
+test("ExactStellarFacilitator.getExtra advertises policyVersion and default freshness policy", () => {
+  const facilitator = new ExactStellarFacilitator();
+  const extra = facilitator.getExtra("stellar:testnet");
+  assert.ok(extra);
+  assert.equal(extra.policyVersion, X402_FRESHNESS_POLICY_VERSION);
+  assert.deepEqual(extra.policy, {
+    version: X402_FRESHNESS_POLICY_VERSION,
+    maxAgeMs: MAX_AGE_MS,
+  });
 });

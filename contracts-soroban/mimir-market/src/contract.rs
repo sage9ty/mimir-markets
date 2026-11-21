@@ -176,6 +176,19 @@ impl MimirMarket {
 
     // ── Views ────────────────────────────────────────────────────────────────
 
+    /// Read-only preflight for a claim resolution (#779).
+    ///
+    /// Returns structural eligibility (lifecycle + constraints) separately
+    /// from the "a signed submission will still need the oracle's auth"
+    /// signal. **Never mutates state**: no `require_auth`, no storage write,
+    /// no TTL bump, no event. Callers that want to know whether a later
+    /// `resolve_claim` *will succeed* must still treat a successful
+    /// preflight as necessary, not sufficient — `preflight_claim` says
+    /// nothing about the verdict the oracle would submit.
+    pub fn preflight_claim(env: Env, claim_id: u64) -> Result<ClaimPreflight, Error> {
+        resolve::preflight_claim(&env, claim_id)
+    }
+
     pub fn get_claim(env: Env, claim_id: u64) -> Result<Claim, Error> {
         storage::get_claim(&env, claim_id)
     }

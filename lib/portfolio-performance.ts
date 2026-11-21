@@ -27,7 +27,13 @@ function isCacheFreshness(value: unknown): value is VSCacheFreshness {
  *
  * A malformed monetary point must fail closed rather than become an SVG NaN or
  * look like a legitimate zero. The server still performs all accounting in
- * atomic USDC; only the display series crosses this boundary as numbers.
+ * atomic USDC; only the display series crosses this boundary as canonical
+ * numeric floats.
+ *
+ * Invariant:
+ * Localized display strings are strictly presentation-only and must never be
+ * accepted as performance inputs or parsed back into money arithmetic. Canonical
+ * numeric values are preserved across locale switches.
  */
 export function isPortfolioPerformanceResponse(
   value: unknown,

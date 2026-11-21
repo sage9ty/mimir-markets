@@ -23,7 +23,7 @@ paths:
     get:
       operationId: listVsFeed
       summary: List public VS claims from the read index with cursor pagination.
-      description: "Returns public claims ordered by descending claim ID (`id_desc`), along with read-index freshness metadata (`cache`) and an optional `nextCursor` for pagination.\n\nPrivate claims are excluded from the public feed. Passing `refresh=1` triggers an index reconciliation before reading."
+      description: "Returns public claims ordered by descending claim ID (`id_desc`), along with read-index freshness metadata (`cache`) and an optional `nextCursor` for pagination.\n\nPrivate claims are excluded from the public feed. Passing `refresh=1` triggers an index reconciliation before reading.\n\nCursors are bound to the normalized query filters (`refresh` excluded) that produced them. A cursor issued for one filter or sort selection is rejected with 400 `invalid_request` when reused with a different selection. Equal-ranked records are ordered deterministically by descending claim ID."
       x-mimir-cache-control: "s-maxage=15, stale-while-revalidate=60"
       x-mimir-access-tier: public_read
       x-mimir-rate-limit-route: "/api/vs"
@@ -39,7 +39,7 @@ paths:
         - name: cursor
           in: query
           required: false
-          description: "Positive integer claim ID cursor (`id < cursor`)."
+          description: "Positive integer claim ID cursor (`id < cursor`). Cursors are bound to the normalized filter selection that issued them; reuse under a different selection is rejected with 400 `invalid_request`."
           schema:
             type: integer
             minimum: 1

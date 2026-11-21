@@ -234,7 +234,6 @@ test("an explicit conflict outranks everything", () => {
 });
 
 // ── Freshness ─────────────────────────────────────────────────────────────────
-
 test("freshness reports age and whether the capture beat the deadline", () => {
   const assessment = assessFreshness(source(), DEADLINE);
   assert.equal(assessment.ageSeconds, 30);
@@ -268,6 +267,81 @@ test("corroborating source order does not change the hash", () => {
   assert.equal(
     contextPackHash(pack({ corroboratingSources: [a, b] })),
     contextPackHash(pack({ corroboratingSources: [b, a] })),
+  );
+});
+
+test("async fetch order does not change the hash when sources share a URL", () => {
+  // Regression: the same page captured twice (or two sources whose URL and
+  // domain coincide) used to tie on URL alone, leaving the digest at the mercy
+  // of whichever fetch finished first.
+  const first = source({
+    url: "https://mirror.example/x",
+    domain: "mirror.example",
+    trustTier: "corroborating",
+    capturedAt: DEADLINE_MS + 10_000,
+    contentHash: HASH_A,
+    excerpt: "First capture of the mirror page.",
+  });
+  const second = source({
+    url: "https://mirror.example/x",
+    domain: "mirror.example",
+    trustTier: "corroborating",
+    capturedAt: DEADLINE_MS + 20_000,
+    contentHash: HASH_B,
+    excerpt: "Second capture of the mirror page.",
+  });
+  assert.equal(
+    contextPackHash(pack({ corroboratingSources: [first, second] })),
+    contextPackHash(pack({ corroboratingSources: [second, first] })),
+  );
+});
+
+test("the remaining capture metadata breaks ties deterministically", () => {
+  const base = source({
+    url: "https://mirror.example/x",
+    domain: "mirror.example",
+    trustTier: "corroborating",
+  });
+  const cases: Array<[ContextSource, ContextSource]> = [
+    // Publish time alone differs.
+    [base, { ...base, publishedAt: (base.publishedAt ?? 0) + 1_000 }],
+    // Reported timezone alone differs.
+    [base, { ...base, sourceTimezone: "America/New_York" }],
+    // Capture time and content hash coincide, only the excerpt differs.
+    [base, { ...base, excerpt: "A different slice of the same page." }],
+  ];
+  for (const [a, b] of cases) {
+    assert.equal(
+      contextPackHash(pack({ corroboratingSources: [a, b] })),
+      contextPackHash(pack({ corroboratingSources: [b, a] })),
+    );
+  }
+});
+
+test("differing capture metadata still changes the hash", () => {
+  // Determinism must not be bought by dropping the metadata: a different
+  // capture is a different piece of evidence and has to produce a new digest.
+  const base = source({
+    url: "https://mirror.example/x",
+    domain: "mirror.example",
+    trustTier: "corroborating",
+  });
+  const baseline = contextPackHash(pack({ corroboratingSources: [base] }));
+  assert.notEqual(
+    baseline,
+    contextPackHash(pack({ corroboratingSources: [{ ...base, capturedAt: base.capturedAt + 1 }] })),
+  );
+  assert.notEqual(
+    baseline,
+    contextPackHash(pack({ corroboratingSources: [{ ...base, contentHash: HASH_B }] })),
+  );
+  assert.notEqual(
+    baseline,
+    contextPackHash(pack({ corroboratingSources: [{ ...base, publishedAt: undefined }] })),
+  );
+  assert.notEqual(
+    baseline,
+    contextPackHash(pack({ corroboratingSources: [{ ...base, sourceTimezone: undefined }] })),
   );
 });
 

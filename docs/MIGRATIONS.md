@@ -106,6 +106,30 @@ step is optional and not required in CI.
 
 ---
 
+## Read-index restore previews
+
+Restore previews for the Postgres read index (`lib/server/read-index-backup.ts`)
+are **dry-run only**. A preview reports which tables would be touched, the
+backup generation being inspected, and the expected row coverage, and it
+verifies the backup schema version and content fingerprint against the
+current registry. Preview mode performs **no database writes**; it does not
+open a write transaction and does not modify `schema_migrations`.
+
+What a preview reports:
+
+- Affected tables and their expected row counts.
+- Backup generation and expected coverage.
+- Schema check: the backup's schema version must match a registered
+  migration version, otherwise the preview fails closed.
+- Fingerprint check: the backup fingerprint must match the recomputed
+  checksum of its payload; a mismatch fails closed and is reported as a
+  checksum error, not a partial restore.
+
+Soroban contract state remains authoritative; the read index is rebuilt from
+chain events, so a preview never treats indexed rows as the source of truth.
+
+---
+
 ## How it works
 
 ```

@@ -34,6 +34,7 @@ import {
   type SsrfReason,
 } from "./ssrf";
 import { recordAllowlistReject, recordSourceFailure } from "./telemetry";
+import { getContentValidationPolicyRevision } from "./content-validation";
 
 export const MAX_REDIRECTS = 3;
 export const MAX_RESPONSE_BYTES = 512 * 1024;
@@ -81,6 +82,8 @@ export interface FetchSuccess {
   redirects: number;
   /** Complete chain of URLs visited during this fetch. */
   redirectChain: string[];
+  /** Content-validation policy revision bound to this fetch result. */
+  policyRevision?: string;
 }
 
 export type FetchResult =
@@ -94,6 +97,8 @@ export interface AgentBudget {
   maxRequests: number;
   /** Bytes this agent may download in the current window. */
   maxBytes: number;
+  /** Window duration in milliseconds. Defaults to 1 hour (3_600_000 ms). */
+  windowMs?: number;
 }
 
 interface BudgetUsage {
@@ -112,9 +117,9 @@ export function defaultAgentBudget(): AgentBudget {
   };
 }
 
-function currentUsage(agentId: string, now: number): BudgetUsage {
+function currentUsage(agentId: string, now: number, windowMs = BUDGET_WINDOW_MS): BudgetUsage {
   const existing = usage.get(agentId);
-  if (!existing || now - existing.windowStartedAt >= BUDGET_WINDOW_MS) {
+  if (!existing || now - existing.windowStartedAt >= windowMs) {
     const fresh = { requests: 0, bytes: 0, windowStartedAt: now };
     usage.set(agentId, fresh);
     return fresh;
@@ -124,11 +129,12 @@ function currentUsage(agentId: string, now: number): BudgetUsage {
 
 /** Remaining allowance, for the agent-facing status endpoint. */
 export function budgetRemaining(agentId: string, budget = defaultAgentBudget(), now = Date.now()) {
-  const used = currentUsage(agentId, now);
+  const windowMs = budget.windowMs ?? BUDGET_WINDOW_MS;
+  const used = currentUsage(agentId, now, windowMs);
   return {
     requests: Math.max(0, budget.maxRequests - used.requests),
     bytes: Math.max(0, budget.maxBytes - used.bytes),
-    windowResetsAt: used.windowStartedAt + BUDGET_WINDOW_MS,
+    windowResetsAt: used.windowStartedAt + windowMs,
   };
 }
 
@@ -141,6 +147,7 @@ export function resetBudgets(): void {
 
 interface CacheEntry {
   value: FetchSuccess;
+  policyRevision: string;
   expiresAt: number;
 }
 
@@ -152,26 +159,76 @@ export function resetResearchCache(): void {
   cache.clear();
 }
 
-export function invalidateResearchCache(url: string): boolean {
-  return cache.delete(url);
+/**
+ * Canonical source identity for cache indexing and deduplication.
+ * Preserves scheme, lowercase host, pathname, and search query while stripping
+ * hash fragments and standard default ports so identical network requests share entries
+ * while distinct normalized source identities remain strictly separated.
+ */
+export function normalizeSourceIdentity(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const u = new URL(trimmed);
+    return `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}${u.pathname}${u.search}`;
+  } catch {
+    return trimmed.toLowerCase();
+  }
 }
 
-function cacheGet(url: string, now: number): FetchSuccess | null {
-  const entry = cache.get(url);
+/**
+ * Invalidate a cached research result by URL / source identity.
+ * Handles both raw and normalized identities.
+ */
+export function invalidateResearchCache(url: string): boolean {
+  const normKey = normalizeSourceIdentity(url);
+  const deletedNorm = cache.delete(normKey);
+  const deletedRaw = cache.delete(url);
+  return deletedNorm || deletedRaw;
+}
+
+/**
+ * Invalidate cached research decisions incompatible with the given policy revision.
+ * When called without arguments, purges all entries not matching the active policy revision.
+ * Returns the count of invalidated entries.
+ */
+export function invalidateIncompatibleResearchCache(
+  policyRevision: string = getContentValidationPolicyRevision(),
+): number {
+  let count = 0;
+  for (const [key, entry] of cache.entries()) {
+    if (entry.policyRevision !== policyRevision) {
+      cache.delete(key);
+      count++;
+    }
+  }
+  return count;
+}
+
+function cacheGet(url: string, now: number, policyRevision: string): FetchSuccess | null {
+  const normKey = normalizeSourceIdentity(url);
+  const entry = cache.get(normKey) ?? cache.get(url);
   if (!entry) return null;
   if (entry.expiresAt <= now) {
+    cache.delete(normKey);
+    cache.delete(url);
+    return null;
+  }
+  if (entry.policyRevision !== policyRevision) {
+    // Invalidate incompatible cached decisions when validation changes
+    cache.delete(normKey);
     cache.delete(url);
     return null;
   }
   return entry.value;
 }
 
-function cacheSet(url: string, value: FetchSuccess, now: number): void {
+function cacheSet(url: string, value: FetchSuccess, policyRevision: string, now: number): void {
   if (cache.size >= MAX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
   }
-  cache.set(url, { value, expiresAt: now + CACHE_TTL_MS });
+  const normKey = normalizeSourceIdentity(url);
+  cache.set(normKey, { value, policyRevision, expiresAt: now + CACHE_TTL_MS });
 }
 
 // ── Validation of one hop ─────────────────────────────────────────────────────
@@ -231,6 +288,8 @@ export interface GatewayFetchArgs {
   resolve?: (host: string) => Promise<string[]>;
   fetchImpl?: typeof globalThis.fetch;
   now?: number;
+  /** Content-validation policy revision to bind to this fetch result. */
+  policyRevision?: string;
 }
 
 function contentTypeAllowed(contentType: string): boolean {
@@ -239,12 +298,7 @@ function contentTypeAllowed(contentType: string): boolean {
 }
 
 function normalizeUrlForLoopCheck(raw: string): string {
-  try {
-    const u = new URL(raw);
-    return `${u.protocol}//${u.host.toLowerCase()}${u.pathname}${u.search}`;
-  } catch {
-    return raw.trim().toLowerCase();
-  }
+  return normalizeSourceIdentity(raw);
 }
 
 /**
@@ -288,6 +342,8 @@ async function readBounded(response: Response, limit: number): Promise<{ text: s
  */
 export async function gatewayFetch(args: GatewayFetchArgs): Promise<FetchResult> {
   const now = args.now ?? Date.now();
+  const policyRevision =
+    args.policyRevision?.trim() || getContentValidationPolicyRevision();
   const fail = <T extends FetchFailure>(failure: T): { ok: false } & T => {
     recordSourceFailure(failure.kind);
     return { ok: false, ...failure };
@@ -340,12 +396,12 @@ export async function gatewayFetch(args: GatewayFetchArgs): Promise<FetchResult>
     return fail({ kind: "paused", detail: `research is paused for agent '${args.agentId}'` });
   }
 
-  const cached = cacheGet(args.url, now);
+  const cached = cacheGet(args.url, now, policyRevision);
   if (cached) return { ok: true, ...cached, fromCache: true };
 
   // Budget is checked BEFORE the request, and charged whether or not the response
   // is useful — a refused-after-connect request still cost the source a hit.
-  const used = currentUsage(args.agentId, now);
+  const used = currentUsage(args.agentId, now, budget.windowMs ?? BUDGET_WINDOW_MS);
   if (used.requests >= budget.maxRequests) {
     return fail({
       kind: "budget",
@@ -496,8 +552,9 @@ export async function gatewayFetch(args: GatewayFetchArgs): Promise<FetchResult>
       fromCache: false,
       redirects,
       redirectChain,
+      policyRevision,
     };
-    cacheSet(args.url, success, now);
+    cacheSet(args.url, success, policyRevision, now);
     return { ok: true, ...success };
   }
 }

@@ -2,6 +2,7 @@
  * Mimir's Stellar-native x402 payment scheme — `exact` on `stellar:testnet`.
  *
  * This module is the whole mechanism: the buyer half, the seller half, and the
+ * ... 
  * local stand-in for what used to be an HTTP facilitator. It implements the real
  * `@x402/core` v2.21 interfaces (`SchemeNetworkClient`, `SchemeNetworkServer`,
  * `SchemeNetworkFacilitator`, `FacilitatorClient`) — nothing here is a shim
@@ -78,10 +79,38 @@ import {
   X402_ASSET_CODE,
   X402_ASSET_ISSUER,
   X402_ASSET_SAC_ID,
+  X402_FRESHNESS_POLICY_VERSION,
+  type X402FreshnessPolicy,
   X402_NETWORK,
   X402_PAYMENT_MAX_AGE_MS,
   X402_SCHEME,
+  defaultFreshnessPolicy,
+  x402PaymentMaxAgeMs,
 } from "./config";
+
+export {
+  X402_FRESHNESS_POLICY_VERSION,
+  type X402FreshnessPolicy,
+  defaultFreshnessPolicy,
+  x402PaymentMaxAgeMs,
+};
+
+/**
+ * Human-readable explanation of a freshness policy evaluation.
+ */
+export function formatFreshnessExplanation(args: {
+  ageMs: number;
+  maxAgeMs: number;
+  policyVersion: string;
+  ok: boolean;
+}): string {
+  const ageSec = Math.round(args.ageMs / 1000);
+  const maxSec = Math.round(args.maxAgeMs / 1000);
+  if (args.ok) {
+    return `payment age ${args.ageMs}ms (~${ageSec}s) is within window ${args.maxAgeMs}ms (~${maxSec}s) under ${args.policyVersion}`;
+  }
+  return `payment age ${args.ageMs}ms (~${ageSec}s) exceeds window ${args.maxAgeMs}ms (~${maxSec}s) under ${args.policyVersion}`;
+}
 import { createHorizonServer, isAccountAddress } from "../stellar";
 import { USDC_DECIMALS, formatAtomicUsdc, parseUsdcAtomic } from "../usdc";
 import { transferUsdc, type AgentWallet } from "../agent-wallets";
@@ -218,6 +247,8 @@ export type StellarVerifyFailure =
   | "already_settled"
   | "horizon_unavailable";
 
+export const RETRYABLE_VERIFY_FAILURES: ReadonlySet<StellarVerifyFailure> = new Set(["horizon_unavailable"]);
+
 export type StellarVerifyResult =
   | {
       ok: true;
@@ -226,8 +257,18 @@ export type StellarVerifyResult =
       /** Atomic units actually paid — may exceed the quote; never less. */
       amountAtomic: bigint;
       settledAt: number;
+      observedAt: number;
+      policy: X402FreshnessPolicy;
+      explanation: string;
     }
-  | { ok: false; reason: StellarVerifyFailure; message: string };
+  | {
+      ok: false;
+      reason: StellarVerifyFailure;
+      message: string;
+      observedAt?: number;
+      policy?: X402FreshnessPolicy;
+      explanation?: string;
+    };
 
 export interface HorizonPaymentOperation {
   type: string;
@@ -282,14 +323,30 @@ export function horizonPaymentReader(): StellarHorizonReader {
 export async function verifyStellarPayment(
   payload: Readonly<Record<string, unknown>>,
   requirements: PaymentRequirements,
-  options: { maxAgeMs?: number; now?: number; backend?: StellarHorizonReader } = {},
+  options: {
+    maxAgeMs?: number;
+    now?: number;
+    backend?: StellarHorizonReader;
+    policy?: X402FreshnessPolicy;
+    policyVersion?: string;
+  } = {},
 ): Promise<StellarVerifyResult> {
+  const now = options.now ?? Date.now();
+  const maxAgeMs = options.maxAgeMs ?? options.policy?.maxAgeMs ?? x402PaymentMaxAgeMs();
+  const policyVersion = options.policy?.version ?? options.policyVersion ?? X402_FRESHNESS_POLICY_VERSION;
+  const policy: X402FreshnessPolicy = {
+    version: policyVersion,
+    maxAgeMs,
+  };
+
   const proof = parsePaymentProof(payload);
   if (!proof) {
     return {
       ok: false,
       reason: "malformed_proof",
       message: `payment payload is not a ${STELLAR_PROOF_KIND} proof`,
+      observedAt: now,
+      policy,
     };
   }
   if (proof.network !== requirements.network) {
@@ -297,6 +354,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "network_mismatch",
       message: `proof names ${proof.network}, quote is for ${requirements.network}`,
+      observedAt: now,
+      policy,
     };
   }
   if (!assetMatches(requirements.asset, X402_ASSET_CODE, X402_ASSET_ISSUER)) {
@@ -304,6 +363,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "unsupported_asset",
       message: `this scheme only settles ${X402_ASSET}, quote asked for ${requirements.asset}`,
+      observedAt: now,
+      policy,
     };
   }
   if (!isAccountAddress(requirements.payTo)) {
@@ -311,6 +372,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "unsupported_pay_to",
       message: `payTo ${requirements.payTo} is not a valid Stellar account address`,
+      observedAt: now,
+      policy,
     };
   }
 
@@ -326,6 +389,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "invalid_signature",
       message: `proof is not signed by ${proof.payer} over this quote`,
+      observedAt: now,
+      policy,
     };
   }
 
@@ -343,12 +408,16 @@ export async function verifyStellarPayment(
         ok: false,
         reason: "transaction_not_found",
         message: `${proof.transaction} is not on the ${requirements.network} ledger`,
+        observedAt: now,
+        policy,
       };
     }
     return {
       ok: false,
       reason: "horizon_unavailable",
       message: `Horizon could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+      observedAt: now,
+      policy,
     };
   }
 
@@ -357,17 +426,26 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "transaction_failed",
       message: `${proof.transaction} landed but did not succeed`,
+      observedAt: now,
+      policy,
     };
   }
 
-  const now = options.now ?? Date.now();
-  const maxAgeMs = options.maxAgeMs ?? X402_PAYMENT_MAX_AGE_MS;
   const age = now - createdAt;
   if (!Number.isFinite(createdAt) || age > maxAgeMs) {
+    const explanation = formatFreshnessExplanation({
+      ageMs: age,
+      maxAgeMs,
+      policyVersion: policy.version,
+      ok: false,
+    });
     return {
       ok: false,
       reason: "payment_too_old",
       message: `payment is ${Math.round(age / 1000)}s old, the window is ${Math.round(maxAgeMs / 1000)}s`,
+      observedAt: now,
+      policy,
+      explanation,
     };
   }
 
@@ -379,6 +457,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "horizon_unavailable",
       message: `Horizon operations read failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      observedAt: now,
+      policy,
     };
   }
 
@@ -399,6 +479,8 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "no_matching_payment",
       message: `${proof.transaction} contains no ${X402_ASSET} payment from ${proof.payer} to ${requirements.payTo}`,
+      observedAt: now,
+      policy,
     };
   }
 
@@ -419,11 +501,31 @@ export async function verifyStellarPayment(
       ok: false,
       reason: "insufficient_amount",
       message: `paid ${formatAtomicUsdc(paid)} USDC, quote is ${formatAtomicUsdc(required)} USDC`,
+      observedAt: now,
+      policy,
     };
   }
 
-  return { ok: true, transaction: proof.transaction, payer: proof.payer, amountAtomic: paid, settledAt: createdAt };
+  const explanation = formatFreshnessExplanation({
+    ageMs: age,
+    maxAgeMs,
+    policyVersion: policy.version,
+    ok: true,
+  });
+
+  return {
+    ok: true,
+    transaction: proof.transaction,
+    payer: proof.payer,
+    amountAtomic: paid,
+    settledAt: createdAt,
+    observedAt: now,
+    policy,
+    explanation,
+  };
 }
+
+// ── Decision trace (privacy-safe) ─────────────────────────────────────────────
 
 /** Ed25519 check. Fails closed on anything malformed, like `lib/stellar-message.ts`. */
 function verifyProofSignature(proof: StellarPaymentProof, message: string): boolean {
@@ -623,7 +725,9 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
       assetIssuer: X402_ASSET_ISSUER,
       decimals: USDC_DECIMALS,
       proofKind: STELLAR_PROOF_KIND,
-      maxAgeMs: X402_PAYMENT_MAX_AGE_MS,
+      maxAgeMs: x402PaymentMaxAgeMs(),
+      policyVersion: X402_FRESHNESS_POLICY_VERSION,
+      policy: defaultFreshnessPolicy(),
     };
   }
 
@@ -644,19 +748,40 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
       backend: this.backend,
     });
     if (!result.ok) {
-      return { isValid: false, invalidReason: result.reason, invalidMessage: result.message };
+      return {
+        isValid: false,
+        invalidReason: result.reason,
+        invalidMessage: result.message,
+        extra: {
+          retryable: RETRYABLE_VERIFY_FAILURES.has(result.reason),
+          ...(result.observedAt !== undefined ? { observedAt: result.observedAt } : {}),
+          ...(result.policy !== undefined ? { policy: result.policy } : {}),
+          ...(result.explanation !== undefined ? { explanation: result.explanation } : {}),
+        },
+      };
     }
     if (await isSettlementConsumed(requirements.network, result.transaction)) {
       return {
         isValid: false,
         invalidReason: "already_settled",
         invalidMessage: `${result.transaction} has already paid for a response`,
+        extra: {
+          observedAt: result.observedAt,
+          policy: result.policy,
+          explanation: result.explanation,
+        },
       };
     }
     return {
       isValid: true,
       payer: result.payer,
-      extra: { transaction: result.transaction, amount: result.amountAtomic.toString() },
+      extra: {
+        transaction: result.transaction,
+        amount: result.amountAtomic.toString(),
+        observedAt: result.observedAt,
+        policy: result.policy,
+        explanation: result.explanation,
+      },
     };
   }
 
@@ -674,6 +799,11 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
         errorMessage: result.message,
         transaction: parsePaymentProof(payload.payload)?.transaction ?? "",
         network: requirements.network,
+        extra: {
+          ...(result.observedAt !== undefined ? { observedAt: result.observedAt } : {}),
+          ...(result.policy !== undefined ? { policy: result.policy } : {}),
+          ...(result.explanation !== undefined ? { explanation: result.explanation } : {}),
+        },
       };
     }
     if (!(await consumeSettlement(requirements.network, result.transaction))) {
@@ -683,6 +813,11 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
         errorMessage: `${result.transaction} has already paid for a response`,
         transaction: result.transaction,
         network: requirements.network,
+        extra: {
+          observedAt: result.observedAt,
+          policy: result.policy,
+          explanation: result.explanation,
+        },
       };
     }
     return {
@@ -694,6 +829,11 @@ export class ExactStellarFacilitator implements SchemeNetworkFacilitator {
       // settles what was agreed, and a buyer that overpaid must not have the
       // surplus booked as Mimir revenue for this call.
       amount: requirements.amount,
+      extra: {
+        observedAt: result.observedAt,
+        policy: result.policy,
+        explanation: result.explanation,
+      },
     };
   }
 }

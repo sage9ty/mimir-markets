@@ -2,7 +2,8 @@
  * GET /api/payments/revenue — live payment earnings across Mimir's paid
  * endpoints (premium price oracle, oracle-as-a-service, council reasoning).
  *
- * Powers the /revenue dashboard. Durable: reads the Neon payments_v2 ledger * (falls back to an in-memory buffer when no DB is configured). The x402
+ * Powers the /revenue dashboard. Durable: reads the Neon payments_v2 ledger
+ * (falls back to an in-memory buffer when no DB is configured). The x402
  * settlements on Stellar remain the ultimate record.
  */
 

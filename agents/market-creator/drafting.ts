@@ -20,6 +20,12 @@ export interface ClaimCandidate {
 export interface DraftingContext {
   /** Source material the LLM should read from. */
   sourceText: string;
+  /**
+   * Normalization policy version(s) in effect for this draft. Included in
+   * deduplication keys so that decisions cached under an incompatible policy
+   * are invalidated explicitly rather than silently reused.
+   */
+  normalizationPolicyVersion?: string;
   /** Optional existing questions to avoid duplicating. */
   existingQuestions?: readonly string[];
   /** Maximum number of candidates to request. */
@@ -31,6 +37,25 @@ export interface DraftingContext {
 export type LlmCompleter = (prompt: string) => Promise<string>;
 
 const DEFAULT_MAX_CANDIDATES = 5;
+
+/**
+ * Build a deterministic deduplication key for a drafted candidate. The key
+ * includes the normalization policy version so that a policy change produces
+ * a distinct identity, and cached decisions under the old version are not
+ * reused.
+ */
+export function buildDedupeKey(
+  candidate: Pick<ClaimCandidate, "question" | "resolutionUrl" | "deadline">,
+  normalizationPolicyVersion: string = "unversioned",
+): string {
+  const normalizedQuestion = candidate.question.trim().toLowerCase().replace(/\s+/g, " ");
+  return [
+    `policy=${normalizationPolicyVersion}`,
+    `q=${normalizedQuestion}`,
+    `url=${candidate.resolutionUrl.trim()}`,
+    `deadline=${candidate.deadline.trim()}`,
+  ].join("|");
+}
 
 export function buildDraftingPrompt(context: DraftingContext): string {
   const max = context.maxCandidates ?? DEFAULT_MAX_CANDIDATES;

@@ -427,7 +427,7 @@ export function runNodeTests({
 
   let result;
   try {
-    result = spawn(process.exefPath, args, {
+    result = spawn(process.execPath, args, {
       cwd: root,
       env: environment,
       stdio: "inherit",

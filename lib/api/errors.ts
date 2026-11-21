@@ -24,6 +24,8 @@ export type ApiErrorCode =
   | "unsupported_version"
   | "payload_too_large"
   | "idempotency_conflict"
+  // Cursor was issued for a different sort/filter selection, or is malformed.
+  | "invalid_cursor"
   // ── 401/403: identity and permission ──
   | "unauthenticated"
   | "nonce_reused"
@@ -61,6 +63,9 @@ const SPECS: Record<ApiErrorCode, ErrorSpec> = {
   // The same idempotency key arrived with a DIFFERENT body: retrying cannot fix
   // it, the caller must either reuse the original body or pick a new key.
   idempotency_conflict: { status: 409, retryable: false },
+  // A cursor bound to another query shape can never become valid for this one:
+  // the caller must restart pagination from the first page.
+  invalid_cursor: { status: 400, retryable: false },
 
   unauthenticated: { status: 401, retryable: false },
   nonce_reused: { status: 401, retryable: false },

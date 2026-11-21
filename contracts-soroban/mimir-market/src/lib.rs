@@ -34,6 +34,8 @@ mod test_dust_isolation;
 mod test_fee_rounding;
 #[config(test)]
 mod test_fees;
+#[cfg(test)]
+mod test_fee_recipient_transition;
 #[config(test)]
 mod test_lifecycle;
 #[config(test)]
@@ -42,6 +44,8 @@ mod test_pagination;
 mod test_settlement;
 #[config(test)]
 mod test_verdict;
+#[cfg(test)]
+mod test_preflight;
 #[config(test)]
 mod test_batch_read;
 #[config(test)]

@@ -42,7 +42,7 @@ let cachedPersonaByAddress: Map<string, PersonaSpec> | null = null;
 function buildPersonaIndex(): Map<string, PersonaSpec> {
   const map = new Map<string, PersonaSpec>();
   for (const p of allCouncilPersonas()) {
-    const addr = process.env[personaPublicEnv(p)]?.split(/\s(#/)[0].trim();
+    const addr = process.env[personaPublicEnv(p)]?.split(/\s+(#/)[0].trim();
     if (addr) map.set(addr, p);
   }
   return map;

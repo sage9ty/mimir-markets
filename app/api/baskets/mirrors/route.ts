@@ -5,6 +5,10 @@
  * and who staked on them) filtered by a subscription the caller names. Nothing
  * here can move funds, and requiring a signature to read your own queue would buy
  * privacy that the chain does not offer anyway.
+ *
+ * Monetary fields (`memberStakeAtomic`, `mirrorAmountAtomic`) are returned as
+ * exact 7-decimal atomic USDC base-10 integer strings; consumers apply display
+ * formatting at the UI boundary.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
