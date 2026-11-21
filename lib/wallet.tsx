@@ -59,6 +59,29 @@ import {
   type ShapedWallet,
 } from "./wallet-connectors";
 import { walletRowLabel } from "./wallet-aria";
+import {
+  getBrowserWalletSigningCoordinator,
+  registerUncoordinatedSignTransaction,
+  type WalletSigningAccountState,
+  type WalletSigningOperationKind,
+  type WalletSigningOperationRecord,
+} from "./wallet-signing-coordinator";
+
+export type WalletSigningOperationMessageKey =
+  | "signingOperationSignTransaction"
+  | "signingOperationSignAuthEntry"
+  | "signingOperationSignMessage"
+  | "signingOperationEnableTrustline";
+
+export const WALLET_SIGNING_OPERATION_MESSAGE_KEYS: Record<
+  WalletSigningOperationKind,
+  WalletSigningOperationMessageKey
+> = {
+  sign_transaction: "signingOperationSignTransaction",
+  sign_auth_entry: "signingOperationSignAuthEntry",
+  sign_message: "signingOperationSignMessage",
+  enable_trustline: "signingOperationEnableTrustline",
+};
 
 /** Remembering the last wallet turns a five-row decision into one tap on return. */
 const RECENT_WALLET_KEY = "mimir-recent-wallet";
@@ -249,6 +272,30 @@ export interface WalletContextValue {
    * transaction is submitted independently of any Soroban staking call.
    */
   requestTrustlineThen: (onReady: () => void) => Promise<void>;
+
+  /** Active cross-tab signing ownership record for the connected account, if any. */
+  signingOwnership?: WalletSigningOperationRecord | null;
+
+  /** True when another tab currently owns an active signing prompt for the connected account. */
+  signingBlockedByOtherTab?: boolean;
+
+  /** Unacknowledged uncertain recovery record from an interrupted signing prompt, if any. */
+  signingRecovery?: WalletSigningOperationRecord | null;
+
+  /** Explicitly acknowledge and dismiss a pending uncertain signing recovery record. */
+  acknowledgeSigningRecovery?: (operationId?: string) => boolean;
+
+  /** Alias for {@link acknowledgeSigningRecovery}. */
+  dismissSigningRecovery?: (operationId?: string) => boolean;
+
+  /**
+   * Acknowledge any pending uncertain recovery for the connected account and invoke
+   * `retry()` as an explicit user opt-in retry.
+   */
+  retryAfterSigningRecovery?: <T>(
+    retry: () => Promise<T>,
+    operationId?: string,
+  ) => Promise<T>;
 }
 
 /**
@@ -337,6 +384,12 @@ const Ctx = createContext<WalletContextValue>({
   wallets: [],
   pendingTrustlineIntent: null,
   requestTrustlineThen: async () => {},
+  signingOwnership: null,
+  signingBlockedByOtherTab: false,
+  signingRecovery: null,
+  acknowledgeSigningRecovery: () => false,
+  dismissSigningRecovery: () => false,
+  retryAfterSigningRecovery: async (retry) => retry(),
 });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -618,11 +671,29 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [options, setOptions] = useState<ShapedWallet[]>([]);
   const [recentId, setRecentId] = useState<string | null>(null);
   const [pendingTrustlineIntent, setPendingTrustlineIntent] = useState<PendingTrustlineIntent | null>(null);
+  const [signingState, setSigningState] = useState<WalletSigningAccountState | null>(null);
 
   // Read by the signing callbacks, which must stay referentially stable so the
   // memoised `signer` does not change identity on every render.
   const addressRef = useRef<string | null>(null);
   addressRef.current = address;
+
+  useEffect(() => {
+    if (!address) {
+      setSigningState(null);
+      return;
+    }
+
+    const coordinator = getBrowserWalletSigningCoordinator();
+    const sync = () => {
+      setSigningState(coordinator.getAccountState(address));
+    };
+
+    sync();
+    return coordinator.subscribe(() => {
+      sync();
+    });
+  }, [address]);
 
   /**
    * Restore a previous session without prompting.
@@ -762,7 +833,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // ── Signing ────────────────────────────────────────────────────────────────
 
-  const signTransaction = useCallback<SignTransaction>(
+  const executeSignTransaction = useCallback<SignTransaction>(
     async (xdr, opts) => {
       // Do not attempt to load or invoke the wallet provider after the
       // application has lost its connected wallet state.
@@ -811,32 +882,63 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const signTransaction = useMemo<SignTransaction>(() => {
+    const coordinated: SignTransaction = async (xdr, opts) => {
+      const activeAddress = addressRef.current;
+      if (!activeAddress) {
+        throw new Error(NO_WALLET);
+      }
+      if (opts?.submit) {
+        throw new Error(
+          "This wallet layer does not sign-and-submit; submit the signed transaction through Soroban RPC.",
+        );
+      }
+
+      const signerAddress = opts?.address ?? activeAddress;
+      const coordinator = getBrowserWalletSigningCoordinator();
+      return coordinator.runOperation(
+        { account: signerAddress, operationKind: "sign_transaction" },
+        () => executeSignTransaction(xdr, opts),
+      );
+    };
+
+    registerUncoordinatedSignTransaction(coordinated, executeSignTransaction);
+    return coordinated;
+  }, [executeSignTransaction]);
+
   const signAuthEntry = useCallback<SignAuthEntry>(
     async (authEntry, opts) => {
       // An auth-entry signature must never proceed after the wallet has
       // disconnected or the provider state has been cleared.
-      if (!addressRef.current) {
+      const activeAddress = addressRef.current;
+      if (!activeAddress) {
         throw new Error(NO_WALLET);
       }
 
-      const kit = await loadKit();
-      const signerAddress =
-        opts?.address ?? addressRef.current ?? undefined;
+      const signerAddress = opts?.address ?? activeAddress;
+      const coordinator = getBrowserWalletSigningCoordinator();
 
-      try {
-        const signed = await kit.signAuthEntry(authEntry, {
-          networkPassphrase:
-            opts?.networkPassphrase ?? NETWORK_PASSPHRASE,
-          ...(signerAddress ? { address: signerAddress } : {}),
-        });
+      return coordinator.runOperation(
+        { account: signerAddress, operationKind: "sign_auth_entry" },
+        async () => {
+          const kit = await loadKit();
 
-        return {
-          signedAuthEntry: signed.signedAuthEntry,
-          signerAddress: signed.signerAddress,
-        };
-      } catch (cause) {
-        throw toWalletError(cause, "sign this authorization");
-      }
+          try {
+            const signed = await kit.signAuthEntry(authEntry, {
+              networkPassphrase:
+                opts?.networkPassphrase ?? NETWORK_PASSPHRASE,
+              ...(signerAddress ? { address: signerAddress } : {}),
+            });
+
+            return {
+              signedAuthEntry: signed.signedAuthEntry,
+              signerAddress: signed.signerAddress,
+            };
+          } catch (cause) {
+            throw toWalletError(cause, "sign this authorization");
+          }
+        },
+      );
     },
     [],
   );
@@ -844,28 +946,59 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const signMessage = useCallback(async (message: string) => {
     // Off-chain signatures are still wallet actions and must not use a stale
     // address after disconnect.
-    if (!addressRef.current) {
+    const activeAddress = addressRef.current;
+    if (!activeAddress) {
       throw new Error(NO_WALLET);
     }
 
-    const kit = await loadKit();
-    const signerAddress = addressRef.current;
+    const coordinator = getBrowserWalletSigningCoordinator();
 
-    try {
-      const signed = await kit.signMessage(message, {
-        networkPassphrase: NETWORK_PASSPHRASE,
-        address: signerAddress,
-      });
+    return coordinator.runOperation(
+      { account: activeAddress, operationKind: "sign_message" },
+      async () => {
+        const kit = await loadKit();
 
-      if (!signed.signedMessage) {
-        throw new Error("The wallet returned no signature.");
-      }
+        try {
+          const signed = await kit.signMessage(message, {
+            networkPassphrase: NETWORK_PASSPHRASE,
+            address: activeAddress,
+          });
 
-      return signed.signedMessage;
-    } catch (cause) {
-      throw toWalletError(cause, "sign this message");
-    }
+          if (!signed.signedMessage) {
+            throw new Error("The wallet returned no signature.");
+          }
+
+          return signed.signedMessage;
+        } catch (cause) {
+          throw toWalletError(cause, "sign this message");
+        }
+      },
+    );
   }, []);
+
+  const acknowledgeSigningRecovery = useCallback((operationId?: string) => {
+    const currentAddress = addressRef.current;
+    if (!currentAddress) return false;
+    const cleared = getBrowserWalletSigningCoordinator().acknowledgeUncertainRecovery(
+      currentAddress,
+      operationId ? { operationId } : undefined,
+    );
+    return cleared !== null;
+  }, []);
+
+  const retryAfterSigningRecovery = useCallback(
+    async <T,>(retry: () => Promise<T>, operationId?: string): Promise<T> => {
+      const currentAddress = addressRef.current;
+      if (currentAddress) {
+        getBrowserWalletSigningCoordinator().acknowledgeUncertainRecovery(
+          currentAddress,
+          operationId ? { operationId } : undefined,
+        );
+      }
+      return retry();
+    },
+    [],
+  );
 
   /**
    * The signer handed to `lib/contract.ts`.
@@ -1041,6 +1174,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       wallets,
       pendingTrustlineIntent,
       requestTrustlineThen,
+      signingOwnership: signingState?.activeOperation ?? null,
+      signingBlockedByOtherTab: signingState?.isBlockedByOtherTab ?? false,
+      signingRecovery: signingState?.uncertainRecovery ?? null,
+      acknowledgeSigningRecovery,
+      dismissSigningRecovery: acknowledgeSigningRecovery,
+      retryAfterSigningRecovery,
     }),
     [
       address,
@@ -1059,6 +1198,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       wallets,
       pendingTrustlineIntent,
       requestTrustlineThen,
+      signingState,
+      acknowledgeSigningRecovery,
+      retryAfterSigningRecovery,
     ],
   );
 

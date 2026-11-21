@@ -62,6 +62,11 @@ import {
   type StellarSigner,
 } from "./stellar";
 import { USDC_CODE, USDC_ISSUER, usdcAsset } from "./usdc";
+import {
+  getBrowserWalletSigningCoordinator,
+  resolveUncoordinatedSignTransaction,
+  type WalletSigningCoordinator,
+} from "./wallet-signing-coordinator";
 
 export type TrustlineStatus =
   /** Trustline present: the account can hold and stake USDC. */
@@ -153,6 +158,30 @@ export async function readUsdcTrustline(
   }
 }
 
+export interface TrustlineHorizonClient {
+  loadAccount: (
+    address: string,
+  ) => Promise<ConstructorParameters<typeof TransactionBuilder>[0] & HorizonAccount>;
+  submitTransaction: (
+    transaction: ReturnType<typeof TransactionBuilder.fromXDR>,
+  ) => Promise<{ hash: string }>;
+}
+
+export interface EnsureUsdcTrustlineOptions {
+  /**
+   * Optional cross-tab coordinator override (for deterministic tests or custom
+   * scopes; defaults to the browser singleton in browser contexts and `null`
+   * on the server).
+   */
+  coordinator?: WalletSigningCoordinator | null;
+  /** Opt-in retry flag to clear a pending `uncertain_recovery` before prompting. */
+  acknowledgeUncertainRecovery?: boolean;
+  /** Optional operationId guard paired with {@link acknowledgeUncertainRecovery}. */
+  expectedRecoveryOperationId?: string;
+  /** Optional Horizon client override for deterministic offline testing. */
+  horizon?: TrustlineHorizonClient;
+}
+
 /**
  * Add the USDC trustline, signed by the connected wallet.
  *
@@ -163,8 +192,12 @@ export async function readUsdcTrustline(
  */
 export async function ensureUsdcTrustline(
   signer: StellarSigner,
+  options: EnsureUsdcTrustlineOptions = {},
 ): Promise<{ added: boolean; hash?: string }> {
-  const existing = await readUsdcTrustline(signer.publicKey);
+  const existing = await readUsdcTrustline(
+    signer.publicKey,
+    options.horizon ? { server: options.horizon } : {},
+  );
   if (existing.status === "ready") return { added: false };
   if (existing.status === "unfunded") {
     throw new Error(
@@ -172,27 +205,51 @@ export async function ensureUsdcTrustline(
     );
   }
 
-  const horizon = createHorizonServer();
-  const account = await horizon.loadAccount(signer.publicKey);
+  const coordinator =
+    options.coordinator !== undefined
+      ? options.coordinator
+      : typeof window !== "undefined"
+        ? getBrowserWalletSigningCoordinator()
+        : null;
 
-  const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(Operation.changeTrust({ asset: usdcAsset() }))
-    // 180s rather than the 30s used for simulation-only envelopes: this one is
-    // actually submitted, and a hardware wallet confirmation can take a while.
-    .setTimeout(180)
-    .build();
+  const execute = async (): Promise<{ added: boolean; hash?: string }> => {
+    const horizon = options.horizon ?? createHorizonServer();
+    const account = await horizon.loadAccount(signer.publicKey);
 
-  const { signedTxXdr } = await signer.signTransaction(transaction.toXDR(), {
-    networkPassphrase: NETWORK_PASSPHRASE,
-    address: signer.publicKey,
-  });
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(Operation.changeTrust({ asset: usdcAsset() }))
+      // 180s rather than the 30s used for simulation-only envelopes: this one is
+      // actually submitted, and a hardware wallet confirmation can take a while.
+      .setTimeout(180)
+      .build();
 
-  const signed = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
-  const result = await horizon.submitTransaction(signed);
-  return { added: true, hash: result.hash };
+    const signTx = resolveUncoordinatedSignTransaction(signer.signTransaction);
+    const { signedTxXdr } = await signTx(transaction.toXDR(), {
+      networkPassphrase: NETWORK_PASSPHRASE,
+      address: signer.publicKey,
+    });
+
+    const signed = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
+    const result = await horizon.submitTransaction(signed);
+    return { added: true, hash: result.hash };
+  };
+
+  if (!coordinator) {
+    return execute();
+  }
+
+  return coordinator.runOperation(
+    {
+      account: signer.publicKey,
+      operationKind: "enable_trustline",
+      acknowledgeUncertainRecovery: options.acknowledgeUncertainRecovery,
+      expectedRecoveryOperationId: options.expectedRecoveryOperationId,
+    },
+    execute,
+  );
 }
 
 
